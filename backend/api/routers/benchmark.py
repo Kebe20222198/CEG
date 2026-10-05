@@ -1,8 +1,8 @@
 """Benchmark endpoint router (Stub S6)."""
 
-from datetime import datetime, timezone
 import json
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -30,12 +30,14 @@ def launch_benchmark(
         status="ACCEPTED",
         created_at=datetime.now(timezone.utc),
         scenarios_json=json.dumps(body.scenarios),
-        results_json=json.dumps({
-            "message": "Benchmark stub S6 executed.",
-            "task_id": body.task_id,
-            "n_runs": body.n_runs,
-            "scenarios": body.scenarios,
-        }),
+        results_json=json.dumps(
+            {
+                "message": "Benchmark stub S6 executed.",
+                "task_id": body.task_id,
+                "n_runs": body.n_runs,
+                "scenarios": body.scenarios,
+            }
+        ),
     )
     db.add(record)
     db.commit()
@@ -43,8 +45,11 @@ def launch_benchmark(
     return BenchmarkResponse(
         id=benchmark_id,
         status="ACCEPTED",
-        message=f"Benchmark {benchmark_id} planifié avec succès ({body.n_runs} runs par scénario).",
-        results=json.loads(record.results_json),
+        message=(
+            f"Benchmark {benchmark_id} planifié avec succès "
+            f"({body.n_runs} runs par scénario)."
+        ),
+        results=json.loads(record.results_json or "{}"),
     )
 
 

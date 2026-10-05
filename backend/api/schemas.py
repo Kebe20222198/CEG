@@ -1,13 +1,16 @@
 """Pydantic schemas for FastAPI REST endpoints."""
 
-from datetime import datetime
+from __future__ import annotations
+
 from typing import Any
+
 from pydantic import BaseModel, Field
 
+from ceg.evaluation.models import Criterion
 from ceg.models.task import SubTask, TaskConstraint
 
-
 # ── Task Schemas ──────────────────────────────────────────────────────────────
+
 
 class TaskCreate(BaseModel):
     """Payload for creating a CognitiveTask."""
@@ -15,20 +18,35 @@ class TaskCreate(BaseModel):
     id: str | None = Field(default=None, description="Optional custom ID for task.")
     name: str | None = Field(default=None, description="Human-readable name.")
     objective: str = Field(..., description="Primary objective of the task.")
-    task_constraints: TaskConstraint | None = Field(default=None, description="Cost, latency, quality constraints.")
+    pipeline: str | None = Field(
+        default=None,
+        description=(
+            "Registered pipeline template to execute (see GET /pipelines). "
+            "If omitted, the graph is built from the subtasks."
+        ),
+    )
+    task_constraints: TaskConstraint | None = Field(
+        default=None, description="Cost, latency, quality constraints."
+    )
     tools_allowed: list[str] = Field(default_factory=list, description="Allowed tools.")
-    subtasks: list[SubTask] = Field(default_factory=list, description="Subtasks composing the graph.")
-    evaluation_criteria: list[dict[str, Any]] = Field(default_factory=list, description="Evaluation criteria list.")
+    subtasks: list[SubTask] = Field(
+        default_factory=list, description="Subtasks composing the graph."
+    )
+    evaluation_criteria: list[Criterion] = Field(
+        default_factory=list, description="Quality criteria for the LLM judge."
+    )
 
 
 class TaskUpdate(BaseModel):
-    """Payload for updating a CognitiveTask."""
+    """Payload for updating a CognitiveTask (omitted fields are unchanged)."""
 
     name: str | None = None
     objective: str | None = None
+    pipeline: str | None = None
     task_constraints: TaskConstraint | None = None
     tools_allowed: list[str] | None = None
     subtasks: list[SubTask] | None = None
+    evaluation_criteria: list[Criterion] | None = None
 
 
 class TaskResponse(BaseModel):
@@ -37,34 +55,72 @@ class TaskResponse(BaseModel):
     id: str
     name: str | None = None
     objective: str
+    pipeline: str | None = None
     task_constraints: TaskConstraint | None = None
     tools_allowed: list[str] = Field(default_factory=list)
     subtasks: list[SubTask] = Field(default_factory=list)
-    evaluation_criteria: list[dict[str, Any]] = Field(default_factory=list)
+    evaluation_criteria: list[Criterion] = Field(default_factory=list)
     created_at: str
     updated_at: str
 
 
 # ── Execution Schemas ─────────────────────────────────────────────────────────
 
+
 class ExecuteTaskRequest(BaseModel):
     """Payload for executing a CognitiveTask."""
 
-    scenario_name: str = Field(default="scenario_b", description="Scenario label (scenario_a, scenario_b, scenario_c, scenario_d).")
-    csv_path: str | None = Field(default=None, description="Custom path to CSV input data file.")
-    inputs: dict[str, Any] = Field(default_factory=dict, description="Additional runtime inputs.")
+    scenario_name: str = Field(
+        default="scenario_b",
+        description=(
+            "Scenario label. For CSV pipelines it also picks the sample file "
+            "(scenario_a, scenario_b, scenario_c, scenario_d) when csv_path "
+            "is not given."
+        ),
+    )
+    csv_path: str | None = Field(
+        default=None,
+        description=(
+            "CSV input file, for CSV pipelines only. Must lie in the sample "
+            "data directory or in CEG_DATA_DIR."
+        ),
+    )
+    inputs: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Graph inputs, available to every node executor.",
+    )
+    robustness_runs: int = Field(
+        default=0,
+        ge=0,
+        le=50,
+        description=(
+            "Number of extra runs used to measure robustness (pipelines only). "
+            "0 leaves robustness unmeasured."
+        ),
+    )
 
 
 class ResumeExecutionRequest(BaseModel):
     """Payload for resuming a Human-in-the-Loop paused execution."""
 
-    approved: bool = Field(default=True, description="Whether to approve or reject the paused action.")
-    value: Any = Field(default=True, description="Value or dictionary passed to the resume handler.")
+    approved: bool = Field(
+        default=True, description="Whether to approve or reject the paused action."
+    )
+    value: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Extra fields for the paused node, e.g. "
+            '{"modified_output": {...}} to replace a reviewed output.'
+        ),
+    )
     comment: str | None = Field(default=None, description="Optional reviewer comment.")
 
 
 class ExecutionResponse(BaseModel):
-    """Summary schema for listing executions."""
+    """Summary schema for listing executions.
+
+    status: running, awaiting_approval, completed or failed.
+    """
 
     id: str
     task_id: str | None = None
@@ -79,13 +135,18 @@ class ExecutionResponse(BaseModel):
 
 
 class ExecutionDetailResponse(ExecutionResponse):
-    """Detailed execution schema including graph topology and full workflow state."""
+    """Detailed execution schema including graph topology and full workflow state.
+
+    While paused, ``workflow_state["pending_approvals"]`` lists what awaits
+    a decision.
+    """
 
     graph: dict[str, Any] | None = None
     workflow_state: dict[str, Any] | None = None
 
 
 # ── Trace Schemas ─────────────────────────────────────────────────────────────
+
 
 class TraceItemResponse(BaseModel):
     """Trace details for a single node execution."""
@@ -106,26 +167,30 @@ class TraceItemResponse(BaseModel):
 
 # ── Metric Schemas ────────────────────────────────────────────────────────────
 
+
 class MetricsResponse(BaseModel):
-    """Evaluation Engine metrics for an execution."""
+    """Evaluation Engine metrics for an execution (None = not measured)."""
 
     execution_id: str
     cost_usd: float
     latency_ms: float
-    quality_score: float
-    robustness_score: float
+    quality_score: float | None
+    robustness_score: float | None
     composite_score: float
     report: dict[str, Any]
 
 
 # ── Benchmark Schemas (Stub S6) ───────────────────────────────────────────────
 
+
 class BenchmarkRequest(BaseModel):
     """Request payload to trigger a benchmark run."""
 
     task_id: str | None = None
     n_runs: int = 10
-    scenarios: list[str] = Field(default_factory=lambda: ["scenario_a", "scenario_b", "scenario_c", "scenario_d"])
+    scenarios: list[str] = Field(
+        default_factory=lambda: ["scenario_a", "scenario_b", "scenario_c", "scenario_d"]
+    )
 
 
 class BenchmarkResponse(BaseModel):
@@ -137,16 +202,25 @@ class BenchmarkResponse(BaseModel):
     results: dict[str, Any] | None = None
 
 
-# ── Model & Health Schemas ────────────────────────────────────────────────────
+# ── Model, Pipeline & Health Schemas ──────────────────────────────────────────
+
 
 class ModelInfo(BaseModel):
-    """Information on supported LLM models."""
+    """A model of the Runtime Decision Engine registry (simulated models)."""
 
     id: str
-    name: str
     tier: str
-    cost_per_1k_input: float
-    cost_per_1k_output: float
+    estimated_cost: float
+    estimated_latency_ms: float
+    supported_capabilities: list[str]
+
+
+class PipelineInfo(BaseModel):
+    """A registered pipeline template."""
+
+    id: str
+    uses_csv: bool
+    criteria: list[str]
 
 
 class HealthResponse(BaseModel):

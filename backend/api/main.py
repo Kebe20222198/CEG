@@ -1,21 +1,34 @@
 """CEG (Cognitive Execution Graph) FastAPI Main Application (Semaine 6)."""
 
+import os
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 
 from api.db import init_db
 from api.routers import benchmark, executions, health, models, tasks
 from api.seed import seed_database
+from ceg import __version__
+
+# Comma-separated list of origins allowed to call the API from a browser.
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "CEG_CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+    ).split(",")
+    if origin.strip()
+]
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Lifespan context manager for database initialization and seeding on startup."""
+    """Create the tables on startup, and seed demo data unless CEG_SEED=0."""
     init_db()
-    seed_database()
+    if os.getenv("CEG_SEED", "1") != "0":
+        seed_database()
     yield
 
 
@@ -25,18 +38,17 @@ app = FastAPI(
         "API REST pour l'orchestration, la persistance et l'évaluation de graphes "
         "d'exécution cognitive (CEG). Semaine 6 du projet CEG."
     ),
-    version="0.2.0",
+    version=__version__,
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
     lifespan=lifespan,
 )
 
-# Allow CORS for React dashboard frontend
+# Allow the React dashboard (CEG_CORS_ORIGINS) to call the API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -50,7 +62,6 @@ app.include_router(models.router)
 
 
 @app.get("/", include_in_schema=False)
-def root_redirect():
+def root_redirect() -> RedirectResponse:
     """Root redirect to OpenAPI documentation."""
-    from fastapi.responses import RedirectResponse
     return RedirectResponse(url="/docs")

@@ -1,8 +1,6 @@
 """Executions, Traces, and Metrics router."""
 
 import json
-from datetime import datetime, timezone
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -15,13 +13,25 @@ from api.schemas import (
     ResumeExecutionRequest,
     TraceItemResponse,
 )
+from api.services import ExecutionStateError, to_detail, to_response
+from api.services import resume_execution as resume
 
 router = APIRouter(tags=["Executions"])
 
 
-@router.get("/executions", response_model=list[ExecutionResponse], summary="Lister les exécutions")
+@router.get(
+    "/executions",
+    response_model=list[ExecutionResponse],
+    summary="Lister les exécutions",
+)
 def list_executions(
-    status_filter: str | None = Query(None, alias="status", description="Filtrer par statut (completed, failed, running, pending)"),
+    status_filter: str | None = Query(
+        None,
+        alias="status",
+        description=(
+            "Filtrer par statut (running, awaiting_approval, completed, failed)"
+        ),
+    ),
     task_id: str | None = Query(None, description="Filtrer par task_id"),
     db: Session = Depends(get_db),
 ) -> list[ExecutionResponse]:
@@ -34,22 +44,7 @@ def list_executions(
         query = query.filter(ExecutionModel.task_id == task_id)
 
     records = query.order_by(ExecutionModel.started_at.desc()).all()
-
-    return [
-        ExecutionResponse(
-            id=r.id,
-            task_id=r.task_id,
-            scenario_name=r.scenario_name,
-            status=r.status,
-            started_at=r.started_at.isoformat() if r.started_at else None,
-            completed_at=r.completed_at.isoformat() if r.completed_at else None,
-            total_cost=r.total_cost,
-            total_latency_ms=r.total_latency_ms,
-            summary=r.summary,
-            error=r.error,
-        )
-        for r in records
-    ]
+    return [to_response(r) for r in records]
 
 
 @router.get(
@@ -59,30 +54,7 @@ def list_executions(
 )
 def get_execution(id: str, db: Session = Depends(get_db)) -> ExecutionDetailResponse:
     """Récupérer le détail complet d'une exécution (graphe + état de workflow)."""
-    r = db.query(ExecutionModel).filter(ExecutionModel.id == id).first()
-    if not r:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Exécution '{id}' non trouvée.",
-        )
-
-    graph = json.loads(r.graph_json) if r.graph_json else None
-    workflow_state = json.loads(r.workflow_state_json) if r.workflow_state_json else None
-
-    return ExecutionDetailResponse(
-        id=r.id,
-        task_id=r.task_id,
-        scenario_name=r.scenario_name,
-        status=r.status,
-        started_at=r.started_at.isoformat() if r.started_at else None,
-        completed_at=r.completed_at.isoformat() if r.completed_at else None,
-        total_cost=r.total_cost,
-        total_latency_ms=r.total_latency_ms,
-        summary=r.summary,
-        error=r.error,
-        graph=graph,
-        workflow_state=workflow_state,
-    )
+    return to_detail(_get_execution_or_404(db, id))
 
 
 @router.get(
@@ -90,16 +62,18 @@ def get_execution(id: str, db: Session = Depends(get_db)) -> ExecutionDetailResp
     response_model=list[TraceItemResponse],
     summary="Trace complète d'une exécution",
 )
-def get_execution_trace(id: str, db: Session = Depends(get_db)) -> list[TraceItemResponse]:
+def get_execution_trace(
+    id: str, db: Session = Depends(get_db)
+) -> list[TraceItemResponse]:
     """Récupérer la trace d'exécution nœud par nœud pour une exécution donnée."""
-    exec_exists = db.query(ExecutionModel).filter(ExecutionModel.id == id).first()
-    if not exec_exists:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Exécution '{id}' non trouvée.",
-        )
+    _get_execution_or_404(db, id)
 
-    traces = db.query(TraceModel).filter(TraceModel.execution_id == id).order_by(TraceModel.id.asc()).all()
+    traces = (
+        db.query(TraceModel)
+        .filter(TraceModel.execution_id == id)
+        .order_by(TraceModel.id.asc())
+        .all()
+    )
 
     return [
         TraceItemResponse(
@@ -113,7 +87,9 @@ def get_execution_trace(id: str, db: Session = Depends(get_db)) -> list[TraceIte
             cost=t.cost,
             latency_ms=t.latency_ms,
             decision=json.loads(t.decision_json) if t.decision_json else None,
-            fallbacks_triggered=json.loads(t.fallbacks_triggered_json) if t.fallbacks_triggered_json else None,
+            fallbacks_triggered=json.loads(t.fallbacks_triggered_json)
+            if t.fallbacks_triggered_json
+            else None,
             error=t.error,
         )
         for t in traces
@@ -154,48 +130,30 @@ def get_execution_metrics(id: str, db: Session = Depends(get_db)) -> MetricsResp
 )
 def resume_execution(
     id: str,
-    payload: ResumeExecutionRequest = ResumeExecutionRequest(),
+    payload: ResumeExecutionRequest | None = None,
     db: Session = Depends(get_db),
 ) -> ExecutionDetailResponse:
-    """Reprendre une exécution mise en pause par un nœud Human-in-the-Loop."""
-    r = db.query(ExecutionModel).filter(ExecutionModel.id == id).first()
-    if not r:
+    """Reprendre une exécution mise en pause par un nœud Human-in-the-Loop.
+
+    ``approved=false`` rejette l'action : le nœud en attente est marqué
+    ``skipped`` et le graphe continue. Répond 409 si l'exécution n'est pas en
+    attente d'approbation.
+    """
+    record = _get_execution_or_404(db, id)
+    try:
+        resume(db, record, payload or ResumeExecutionRequest())
+    except ExecutionStateError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
+    return to_detail(record)
+
+
+def _get_execution_or_404(db: Session, execution_id: str) -> ExecutionModel:
+    record = db.get(ExecutionModel, execution_id)
+    if record is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Exécution '{id}' non trouvée.",
+            detail=f"Exécution '{execution_id}' non trouvée.",
         )
-
-    # Update approval records in workflow state
-    workflow_state = json.loads(r.workflow_state_json) if r.workflow_state_json else {}
-    approvals = workflow_state.get("human_approvals", {})
-    approvals["manual_resume"] = {
-        "approved": payload.approved,
-        "value": payload.value,
-        "comment": payload.comment,
-        "resumed_at": datetime.now(timezone.utc).isoformat(),
-    }
-    workflow_state["human_approvals"] = approvals
-
-    r.status = "completed" if payload.approved else "cancelled"
-    r.completed_at = datetime.now(timezone.utc)
-    decision_str = "approuvée" if payload.approved else "rejetée"
-    r.summary = f"Reprise HITL ({decision_str}) : {payload.comment or 'Sans commentaire'}"
-    r.workflow_state_json = json.dumps(workflow_state)
-    db.commit()
-    db.refresh(r)
-
-    graph = json.loads(r.graph_json) if r.graph_json else None
-    return ExecutionDetailResponse(
-        id=r.id,
-        task_id=r.task_id,
-        scenario_name=r.scenario_name,
-        status=r.status,
-        started_at=r.started_at.isoformat() if r.started_at else None,
-        completed_at=r.completed_at.isoformat() if r.completed_at else None,
-        total_cost=r.total_cost,
-        total_latency_ms=r.total_latency_ms,
-        summary=r.summary,
-        error=r.error,
-        graph=graph,
-        workflow_state=workflow_state,
-    )
+    return record

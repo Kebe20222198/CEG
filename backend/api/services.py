@@ -1,0 +1,490 @@
+"""Execution service: runs a task's graph, persists traces and metrics.
+
+Shared by the REST routers and the seed script, so that both go through the
+same code path instead of the seed calling a route function directly.
+
+Every run is compiled with a checkpointer and uses the execution id as thread
+id. This gives two things:
+  - Human-in-the-Loop: a run that reaches an approval node stops with status
+    ``awaiting_approval`` and ``resume_execution`` continues the same run;
+  - honest failure traces: when a node aborts, the nodes that completed
+    before it are read back from the last checkpoint.
+
+The checkpointer lives in memory: paused executions do not survive a server
+restart (resuming one then fails with a clear error).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import uuid
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from langgraph.checkpoint.memory import MemorySaver
+from sqlalchemy.orm import Session
+
+from api.db import ExecutionModel, MetricModel, TaskModel, TraceModel
+from api.pipelines import PIPELINES, PipelineSpec, graph_from_subtasks
+from api.schemas import (
+    ExecuteTaskRequest,
+    ExecutionDetailResponse,
+    ExecutionResponse,
+    ResumeExecutionRequest,
+)
+from ceg.compiler.compiler import CEGCompiler, CompiledWorkflow
+from ceg.compiler.mock_executor import MockExecutor
+from ceg.evaluation.engine import EvaluationEngine
+from ceg.evaluation.models import Criterion
+from ceg.models.graph import CEGGraph
+from ceg.models.task import SubTask, TaskConstraint
+from ceg.runtime.decision_engine import RuntimeDecisionEngine
+from ceg.runtime.fallback import NodeAbortError
+
+FIXTURES_DIR = (Path(__file__).parent.parent / "tests" / "fixtures").resolve()
+
+# Scenario name keywords → bundled sample CSV (first match wins).
+_SCENARIO_FIXTURES: list[tuple[tuple[str, ...], str]] = [
+    (("scenario_a", "normal"), "scenario_a_normal.csv"),
+    (("scenario_c", "multi"), "scenario_c_multiple_anomalies.csv"),
+    (("scenario_d", "corrupted", "fault"), "scenario_d_corrupted.csv"),
+]
+_DEFAULT_FIXTURE = "scenario_b_single_anomaly.csv"
+
+CHECKPOINTER = MemorySaver()
+
+
+class ExecutionRequestError(ValueError):
+    """The request cannot be executed as given (mapped to HTTP 400)."""
+
+
+class ExecutionStateError(RuntimeError):
+    """The execution is not in a state allowing this action (HTTP 409)."""
+
+
+# ── Helpers: inputs ───────────────────────────────────────────────────────────
+
+
+def allowed_data_dirs() -> list[Path]:
+    """Directories a client-supplied CSV path may point into.
+
+    The bundled fixtures, plus ``CEG_DATA_DIR`` when set. Any other path is
+    refused: the API must not read arbitrary files of the server.
+    """
+    dirs = [FIXTURES_DIR]
+    extra = os.getenv("CEG_DATA_DIR")
+    if extra:
+        dirs.append(Path(extra).resolve())
+    return dirs
+
+
+def resolve_csv_path(payload: ExecuteTaskRequest) -> str:
+    """Return the CSV to read: the client's path if allowed, else a fixture."""
+    if payload.csv_path:
+        candidate = Path(payload.csv_path).resolve()
+        if not any(candidate.is_relative_to(d) for d in allowed_data_dirs()):
+            raise ExecutionRequestError(
+                "csv_path must point into the sample data directory or into "
+                "CEG_DATA_DIR."
+            )
+        if not candidate.is_file():
+            raise ExecutionRequestError(f"CSV file not found: {payload.csv_path}")
+        return str(candidate)
+
+    scenario = payload.scenario_name.lower()
+    for keywords, filename in _SCENARIO_FIXTURES:
+        if any(k in scenario for k in keywords):
+            return str(FIXTURES_DIR / filename)
+    return str(FIXTURES_DIR / _DEFAULT_FIXTURE)
+
+
+# ── Helpers: task → runnable pieces ───────────────────────────────────────────
+
+
+def _pipeline_of(task: TaskModel) -> PipelineSpec | None:
+    if task.pipeline is None:
+        return None
+    spec = PIPELINES.get(task.pipeline)
+    if spec is None:
+        raise ExecutionRequestError(f"Unknown pipeline '{task.pipeline}'.")
+    return spec
+
+
+def _constraints_of(task: TaskModel) -> TaskConstraint:
+    if task.task_constraints_json:
+        return TaskConstraint.model_validate_json(task.task_constraints_json)
+    return TaskConstraint()
+
+
+def _criteria_of(task: TaskModel, spec: PipelineSpec | None) -> list[Criterion]:
+    if spec is not None and spec.criteria:
+        return list(spec.criteria)
+    raw = json.loads(task.evaluation_criteria_json or "[]")
+    return [Criterion.model_validate(c) for c in raw]
+
+
+def _executor_of(spec: PipelineSpec | None) -> MockExecutor:
+    return spec.make_executor() if spec is not None else MockExecutor()
+
+
+def _graph_of(task: TaskModel, spec: PipelineSpec | None) -> CEGGraph:
+    if spec is not None:
+        return spec.build_graph()
+    subtasks = [
+        SubTask.model_validate(st) for st in json.loads(task.subtasks_json or "[]")
+    ]
+    try:
+        return graph_from_subtasks(task.objective, subtasks)
+    except ValueError as exc:
+        raise ExecutionRequestError(f"Invalid subtask graph: {exc}") from exc
+
+
+def _compile(
+    graph: CEGGraph, executor: MockExecutor, engine: RuntimeDecisionEngine
+) -> CompiledWorkflow:
+    return CEGCompiler(engine=engine, executor=executor).compile(
+        graph, checkpointer=CHECKPOINTER
+    )
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
+
+def start_execution(
+    db: Session, task: TaskModel, payload: ExecuteTaskRequest
+) -> ExecutionModel:
+    """Execute ``task`` and persist the outcome.
+
+    Returns the execution record, whose status is ``completed``, ``failed``
+    or ``awaiting_approval``.
+
+    Raises:
+        ExecutionRequestError: If the request is invalid (nothing is stored).
+    """
+    spec = _pipeline_of(task)
+    graph = _graph_of(task, spec)
+    criteria = _criteria_of(task, spec)
+    constraints = _constraints_of(task)
+
+    inputs = dict(payload.inputs)
+    if spec is not None and spec.uses_csv:
+        inputs["csv_path"] = resolve_csv_path(payload)
+    elif payload.csv_path:
+        raise ExecutionRequestError("This task's pipeline does not read a CSV file.")
+
+    record = ExecutionModel(
+        id=f"exec_{uuid.uuid4().hex[:12]}",
+        task_id=task.id,
+        scenario_name=payload.scenario_name,
+        status="running",
+        started_at=_now(),
+        graph_json=graph.model_dump_json(),
+    )
+    db.add(record)
+    db.commit()
+
+    try:
+        engine = RuntimeDecisionEngine(budget_total=constraints.max_cost_usd)
+        workflow = _compile(graph, _executor_of(spec), engine)
+        state, error = _invoke(
+            workflow,
+            lambda: workflow.invoke({"inputs": inputs}, thread_id=record.id),
+            record.id,
+        )
+        _store_outcome(
+            db,
+            record,
+            graph,
+            state,
+            error,
+            evaluation=_Evaluation(
+                criteria=criteria,
+                constraints=constraints,
+                robustness_runs=payload.robustness_runs,
+                spec=spec,
+                inputs=inputs,
+            ),
+        )
+    except Exception as exc:
+        _mark_failed(db, record, f"Internal error: {exc}")
+        raise
+    return record
+
+
+def resume_execution(
+    db: Session, record: ExecutionModel, payload: ResumeExecutionRequest
+) -> ExecutionModel:
+    """Continue an execution paused on a Human-in-the-Loop node.
+
+    Raises:
+        ExecutionStateError: If the execution is not awaiting approval, or its
+            checkpoint is gone (server restarted since the pause).
+    """
+    if record.status != "awaiting_approval":
+        raise ExecutionStateError(
+            f"Execution '{record.id}' is '{record.status}', not awaiting approval."
+        )
+    task = db.get(TaskModel, record.task_id) if record.task_id else None
+    if task is None:
+        raise ExecutionStateError("The task of this execution no longer exists.")
+
+    spec = _pipeline_of(task)
+    constraints = _constraints_of(task)
+    graph = CEGGraph.model_validate_json(record.graph_json or "{}")
+    engine = RuntimeDecisionEngine(budget_total=constraints.max_cost_usd)
+    workflow = _compile(graph, _executor_of(spec), engine)
+
+    snapshot = workflow.get_state(record.id)
+    if not snapshot.next:
+        _mark_failed(
+            db,
+            record,
+            "Checkpoint lost (the API was restarted while the execution was "
+            "paused): it cannot be resumed.",
+        )
+        raise ExecutionStateError(record.error or "")
+
+    # The budget already spent before the pause still counts.
+    engine.spend(float(snapshot.values.get("total_cost", 0.0)))
+
+    decision: dict[str, Any] = {**(payload.value or {}), "approved": payload.approved}
+    if payload.comment:
+        decision["comment"] = payload.comment
+
+    try:
+        state, error = _invoke(
+            workflow, lambda: workflow.resume(record.id, value=decision), record.id
+        )
+        _store_outcome(
+            db,
+            record,
+            graph,
+            state,
+            error,
+            evaluation=_Evaluation(
+                criteria=_criteria_of(task, spec),
+                constraints=constraints,
+                robustness_runs=0,
+                spec=spec,
+                inputs={},
+            ),
+        )
+    except Exception as exc:
+        _mark_failed(db, record, f"Internal error: {exc}")
+        raise
+    return record
+
+
+def to_response(record: ExecutionModel) -> ExecutionResponse:
+    """Summary view of an execution record."""
+    return ExecutionResponse(**_summary_fields(record))
+
+
+def to_detail(record: ExecutionModel) -> ExecutionDetailResponse:
+    """Detailed view of an execution record (graph and workflow state)."""
+    return ExecutionDetailResponse(
+        **_summary_fields(record),
+        graph=json.loads(record.graph_json) if record.graph_json else None,
+        workflow_state=(
+            json.loads(record.workflow_state_json)
+            if record.workflow_state_json
+            else None
+        ),
+    )
+
+
+# ── Internals ─────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class _Evaluation:
+    """What the Evaluation Engine needs once a run is over."""
+
+    criteria: list[Criterion]
+    constraints: TaskConstraint
+    robustness_runs: int
+    spec: PipelineSpec | None
+    inputs: dict[str, Any]
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _invoke(
+    workflow: CompiledWorkflow,
+    run: Callable[[], dict[str, Any]],
+    thread_id: str,
+) -> tuple[dict[str, Any], NodeAbortError | None]:
+    """Run ``run()``; on abort, return the state saved at the last checkpoint."""
+    try:
+        return run(), None
+    except NodeAbortError as exc:
+        partial = dict(workflow.get_state(thread_id).values)
+        return partial, exc
+
+
+def _failure_entry(error: NodeAbortError) -> dict[str, Any]:
+    """Trace entry for the node that aborted, from the abort error itself."""
+    return {
+        "node_id": error.node_id,
+        "status": "failed",
+        "output": None,
+        "cost": 0.0,
+        "latency_ms": 0.0,
+        "confidence": 0.0,
+        "model_used": None,
+        "fallbacks_triggered": error.fallbacks_triggered,
+        "error": error.reason,
+    }
+
+
+def _store_outcome(
+    db: Session,
+    record: ExecutionModel,
+    graph: CEGGraph,
+    state: dict[str, Any],
+    error: NodeAbortError | None,
+    evaluation: _Evaluation,
+) -> None:
+    """Persist state, traces and (once the run is over) metrics."""
+    state = dict(state)
+    interrupts = state.pop("__interrupt__", None)
+    log: list[dict[str, Any]] = list(state.get("execution_log", []))
+
+    if error is not None:
+        log.append(_failure_entry(error))
+        state["execution_log"] = log
+        status = "failed"
+        record.error = str(error)
+    elif interrupts:
+        status = "awaiting_approval"
+        state["pending_approvals"] = [i.value for i in interrupts]
+    else:
+        status = "completed"
+        record.error = None
+
+    total_cost = float(state.get("total_cost", 0.0))
+    total_latency_ms = float(state.get("total_latency_ms", 0.0))
+    record.status = status
+    record.total_cost = total_cost
+    record.total_latency_ms = total_latency_ms
+    record.workflow_state_json = json.dumps(state, default=str)
+    record.summary = (
+        f"Scénario {record.scenario_name}: {status}. "
+        f"Coût: ${total_cost:.4f}, Latence: {total_latency_ms:.1f}ms."
+    )
+
+    _replace_traces(db, record.id, graph, log)
+
+    if status != "awaiting_approval":
+        record.completed_at = _now()
+        _store_metrics(db, record, state, status, evaluation)
+        CHECKPOINTER.delete_thread(record.id)
+
+    db.commit()
+
+
+def _replace_traces(
+    db: Session, execution_id: str, graph: CEGGraph, log: list[dict[str, Any]]
+) -> None:
+    objectives = {node.id: node.objective for node in graph.nodes}
+    db.query(TraceModel).filter(TraceModel.execution_id == execution_id).delete()
+    for entry in log:
+        node_id = entry.get("node_id", "unknown")
+        objective = objectives.get(node_id)
+        db.add(
+            TraceModel(
+                execution_id=execution_id,
+                node_id=node_id,
+                status=entry.get("status", "completed"),
+                model=entry.get("model_used"),
+                prompt_json=json.dumps({"objective": objective}) if objective else None,
+                response_json=json.dumps(entry.get("output"), default=str),
+                # Token counts are not simulated by the mock executors.
+                tokens_input=0,
+                tokens_output=0,
+                cost=float(entry.get("cost", 0.0)),
+                latency_ms=float(entry.get("latency_ms", 0.0)),
+                decision_json=json.dumps(entry.get("decision"), default=str),
+                fallbacks_triggered_json=json.dumps(entry.get("fallbacks_triggered")),
+                error=entry.get("error"),
+            )
+        )
+
+
+def _store_metrics(
+    db: Session,
+    record: ExecutionModel,
+    state: dict[str, Any],
+    status: str,
+    evaluation: _Evaluation,
+) -> None:
+    engine = EvaluationEngine(criteria=evaluation.criteria)
+
+    robustness: float | None = None
+    spec = evaluation.spec
+    if evaluation.robustness_runs > 0 and spec is not None:
+        robustness = engine.measure_robustness(
+            build_fn=spec.build_graph,
+            executor_factory=spec.make_executor,
+            scenario_name=record.scenario_name,
+            n_runs=evaluation.robustness_runs,
+            inputs=evaluation.inputs,
+        ).success_rate
+
+    report = engine.evaluate(
+        workflow_state=state,
+        scenario_name=record.scenario_name,
+        max_budget_usd=evaluation.constraints.max_cost_usd,
+        max_latency_seconds=evaluation.constraints.max_latency_seconds,
+        robustness_score=robustness,
+    )
+    if status == "failed":
+        # A failed run produced no result: its speed and cost are no merit.
+        report.composite_score = 0.0
+        report.metadata["failed"] = True
+
+    db.query(MetricModel).filter(MetricModel.execution_id == record.id).delete()
+    db.add(
+        MetricModel(
+            id=record.id,
+            execution_id=record.id,
+            cost_usd=report.total_cost_usd,
+            latency_ms=report.total_latency_ms,
+            quality_score=report.quality_score,
+            robustness_score=report.robustness_score,
+            composite_score=report.composite_score,
+            report_json=report.model_dump_json(),
+        )
+    )
+
+
+def _mark_failed(db: Session, record: ExecutionModel, message: str) -> None:
+    """Never leave an execution stuck in ``running`` after an internal error."""
+    db.rollback()
+    record.status = "failed"
+    record.error = message
+    record.completed_at = _now()
+    db.commit()
+
+
+def _summary_fields(record: ExecutionModel) -> dict[str, Any]:
+    return {
+        "id": record.id,
+        "task_id": record.task_id,
+        "scenario_name": record.scenario_name,
+        "status": record.status,
+        "started_at": record.started_at.isoformat() if record.started_at else None,
+        "completed_at": (
+            record.completed_at.isoformat() if record.completed_at else None
+        ),
+        "total_cost": record.total_cost,
+        "total_latency_ms": record.total_latency_ms,
+        "summary": record.summary,
+        "error": record.error,
+    }

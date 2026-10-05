@@ -1,80 +1,69 @@
-"""Tests S6 — REST API Endpoints with FastAPI TestClient."""
+"""Tests S6 — REST API Endpoints with FastAPI TestClient.
 
-import os
+The database is a temporary file (see conftest.py) seeded with the demo
+tasks on application startup.
+"""
+
+from collections.abc import Iterator
+from typing import Any
+
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
-from api.db import Base, get_db
 from api.main import app
+from ceg.runtime.decision_engine import DEFAULT_MODEL_REGISTRY
 
-# Use a temporary test database
-TEST_DB_PATH = "./test_ceg_api.db"
-TEST_SQLALCHEMY_DATABASE_URL = f"sqlite:///{TEST_DB_PATH}"
-
-test_engine = create_engine(
-    TEST_SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False},
-)
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
-
-
-def override_get_db():
-    try:
-        db = TestingSessionLocal()
-        yield db
-    finally:
-        db.close()
-
-
-app.dependency_overrides[get_db] = override_get_db
-
-
-@pytest.fixture(autouse=True, scope="module")
-def setup_test_database():
-    """Create test DB tables before module tests and remove file after."""
-    Base.metadata.create_all(bind=test_engine)
-    yield
-    Base.metadata.drop_all(bind=test_engine)
-    if os.path.exists(TEST_DB_PATH):
-        os.remove(TEST_DB_PATH)
+REGISTRY_MODELS = {m.name for m in DEFAULT_MODEL_REGISTRY}
 
 
 @pytest.fixture
-def client():
-    """FastAPI TestClient fixture."""
+def client() -> Iterator[TestClient]:
+    """FastAPI TestClient fixture (runs the startup seeding)."""
     with TestClient(app) as c:
         yield c
 
 
-# ── Health & Models ───────────────────────────────────────────────────────────
+def _create_task(client: TestClient, **payload: Any) -> dict[str, Any]:
+    res = client.post("/tasks", json=payload)
+    assert res.status_code == 201, res.text
+    created: dict[str, Any] = res.json()
+    return created
+
+
+# ── Health, Models & Pipelines ────────────────────────────────────────────────
+
 
 def test_health_endpoint(client):
+    from ceg import __version__
+
     response = client.get("/health")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "ok"
     assert data["sqlite"] == "connected"
-    assert "version" in data
+    assert data["version"] == __version__
 
 
-def test_list_models_endpoint(client):
+def test_models_endpoint_lists_the_engine_registry(client):
     response = client.get("/models")
     assert response.status_code == 200
     models = response.json()
-    assert isinstance(models, list)
-    assert len(models) >= 3
-    tiers = {m["tier"] for m in models}
-    assert "fast" in tiers
-    assert "balanced" in tiers
-    assert "quality" in tiers
+    assert {m["id"] for m in models} == REGISTRY_MODELS
+    assert {m["tier"] for m in models} == {"fast", "balanced", "quality"}
+
+
+def test_pipelines_endpoint(client):
+    response = client.get("/pipelines")
+    assert response.status_code == 200
+    pipelines = {p["id"]: p for p in response.json()}
+    assert pipelines["analyse_ventes_alertes"]["uses_csv"] is True
+    assert "validation_budget_hitl" in pipelines
 
 
 # ── Tasks CRUD ────────────────────────────────────────────────────────────────
 
+
 def test_task_crud_lifecycle(client):
-    # 1. Create task
     task_payload = {
         "id": "test_pipeline_task",
         "name": "Pipeline de Test",
@@ -92,173 +81,236 @@ def test_task_crud_lifecycle(client):
                 "required_capabilities": ["reading"],
             }
         ],
+        "evaluation_criteria": [
+            {
+                "name": "clarity",
+                "description": "Sortie claire",
+                "weight": 1.0,
+                "evaluation_prompt_template": "{output}",
+            }
+        ],
     }
-    create_res = client.post("/tasks", json=task_payload)
-    assert create_res.status_code == 201
-    created_data = create_res.json()
-    assert created_data["id"] == "test_pipeline_task"
-    assert created_data["name"] == "Pipeline de Test"
+    created = _create_task(client, **task_payload)
+    assert created["id"] == "test_pipeline_task"
+    assert created["pipeline"] is None
+    assert created["evaluation_criteria"][0]["name"] == "clarity"
 
     # Duplicate creation error
-    dup_res = client.post("/tasks", json=task_payload)
-    assert dup_res.status_code == 400
+    assert client.post("/tasks", json=task_payload).status_code == 400
 
-    # 2. List tasks
-    list_res = client.get("/tasks")
-    assert list_res.status_code == 200
-    tasks = list_res.json()
-    assert any(t["id"] == "test_pipeline_task" for t in tasks)
-
-    # 3. Get task
+    # List / get
+    assert any(t["id"] == "test_pipeline_task" for t in client.get("/tasks").json())
     get_res = client.get("/tasks/test_pipeline_task")
     assert get_res.status_code == 200
     assert get_res.json()["objective"] == "Exécuter des tests d'intégration API"
+    assert client.get("/tasks/non_existent_id").status_code == 404
 
-    # Get non-existent
-    not_found_get = client.get("/tasks/non_existent_id")
-    assert not_found_get.status_code == 404
-
-    # 4. Update task
-    update_payload = {"name": "Pipeline Mis à jour"}
-    put_res = client.put("/tasks/test_pipeline_task", json=update_payload)
+    # Update, including the evaluation criteria
+    put_res = client.put(
+        "/tasks/test_pipeline_task",
+        json={"name": "Pipeline Mis à jour", "evaluation_criteria": []},
+    )
     assert put_res.status_code == 200
     assert put_res.json()["name"] == "Pipeline Mis à jour"
+    assert put_res.json()["evaluation_criteria"] == []
+    assert client.put("/tasks/non_existent_id", json={"name": "x"}).status_code == 404
 
-    # Update non-existent
-    put_not_found = client.put("/tasks/non_existent_id", json=update_payload)
-    assert put_not_found.status_code == 404
+    # Delete
+    assert client.delete("/tasks/test_pipeline_task").status_code == 204
+    assert client.get("/tasks/test_pipeline_task").status_code == 404
+    assert client.delete("/tasks/non_existent_id").status_code == 404
 
-    # 5. Delete task
-    del_res = client.delete("/tasks/test_pipeline_task")
-    assert del_res.status_code == 204
 
-    # Verify deleted
-    get_del = client.get("/tasks/test_pipeline_task")
-    assert get_del.status_code == 404
-
-    # Delete non-existent
-    del_not_found = client.delete("/tasks/non_existent_id")
-    assert del_not_found.status_code == 404
+def test_unknown_pipeline_is_rejected(client):
+    res = client.post("/tasks", json={"objective": "x", "pipeline": "does_not_exist"})
+    assert res.status_code == 422
 
 
 # ── Execution, Trace & Metrics ────────────────────────────────────────────────
 
-def test_execute_task_and_fetch_trace_and_metrics(client):
-    # First create a task
-    task_payload = {
-        "id": "sales_execution_task",
-        "name": "Analyse Ventes",
-        "objective": "Tester l'exécution du cas d'usage fil rouge",
-    }
-    client.post("/tasks", json=task_payload)
 
-    # Execute task on scenario_b
+def test_execute_sales_pipeline_records_real_traces(client):
+    _create_task(
+        client,
+        id="sales_execution_task",
+        objective="Tester l'exécution du cas d'usage fil rouge",
+        pipeline="analyse_ventes_alertes",
+    )
     exec_res = client.post(
         "/tasks/sales_execution_task/execute",
-        json={"scenario_name": "scenario_b_single_anomaly"},
+        json={"scenario_name": "scenario_b_single_anomaly", "robustness_runs": 3},
     )
-    assert exec_res.status_code == 200
+    assert exec_res.status_code == 200, exec_res.text
     exec_data = exec_res.json()
     assert exec_data["status"] == "completed"
     assert exec_data["task_id"] == "sales_execution_task"
     assert exec_data["total_cost"] > 0
-    assert exec_data["total_latency_ms"] > 0
-    assert "graph" in exec_data
-    assert "workflow_state" in exec_data
-
     exec_id = exec_data["id"]
 
-    # Execute non-existent task 404
-    exec_404 = client.post("/tasks/invalid_task_id/execute", json={})
-    assert exec_404.status_code == 404
+    assert client.post("/tasks/invalid_task_id/execute", json={}).status_code == 404
+    assert any(e["id"] == exec_id for e in client.get("/executions").json())
+    assert client.get(f"/executions/{exec_id}").json()["id"] == exec_id
+    assert client.get("/executions/invalid_exec_id").status_code == 404
 
-    # List executions
-    list_execs = client.get("/executions")
-    assert list_execs.status_code == 200
-    execs = list_execs.json()
-    assert any(e["id"] == exec_id for e in execs)
+    traces = {
+        t["node_id"]: t for t in client.get(f"/executions/{exec_id}/trace").json()
+    }
+    assert set(traces) == {
+        "fetch_data",
+        "aggregate_region",
+        "compute_trend",
+        "detect_anomaly",
+        "generate_alert",
+    }
+    # The model really chosen by the engine is recorded, per the tier hints.
+    assert {t["model"] for t in traces.values()} <= REGISTRY_MODELS
+    assert traces["detect_anomaly"]["model"] == "quality-pro"
+    assert traces["detect_anomaly"]["decision"]["tier_hint"] == "quality"
+    assert traces["fetch_data"]["prompt"]["objective"]
+    assert client.get("/executions/invalid_exec_id/trace").status_code == 404
 
-    # Get execution detail
-    detail_res = client.get(f"/executions/{exec_id}")
-    assert detail_res.status_code == 200
-    assert detail_res.json()["id"] == exec_id
-
-    # Get execution 404
-    detail_404 = client.get("/executions/invalid_exec_id")
-    assert detail_404.status_code == 404
-
-    # Fetch trace
-    trace_res = client.get(f"/executions/{exec_id}/trace")
-    assert trace_res.status_code == 200
-    traces = trace_res.json()
-    assert isinstance(traces, list)
-    assert len(traces) >= 4  # fetch_data, aggregate_region, compute_trend, detect_anomaly, generate_alert
-    node_ids = [t["node_id"] for t in traces]
-    assert "fetch_data" in node_ids
-
-    # Trace 404
-    trace_404 = client.get("/executions/invalid_exec_id/trace")
-    assert trace_404.status_code == 404
-
-    # Fetch metrics
-    metrics_res = client.get(f"/executions/{exec_id}/metrics")
-    assert metrics_res.status_code == 200
-    metrics = metrics_res.json()
+    metrics = client.get(f"/executions/{exec_id}/metrics").json()
     assert metrics["execution_id"] == exec_id
-    assert metrics["quality_score"] > 0.0
+    assert metrics["quality_score"] is not None
+    assert metrics["robustness_score"] == 1.0  # 3 runs, all succeeded
     assert metrics["composite_score"] > 0.0
+    assert metrics["report"]["metadata"]["judge"] == "MockJudgeClient"
+    assert client.get("/executions/invalid_exec_id/metrics").status_code == 404
 
-    # Metrics 404
-    metrics_404 = client.get("/executions/invalid_exec_id/metrics")
-    assert metrics_404.status_code == 404
+
+def test_robustness_is_unmeasured_by_default(client):
+    exec_res = client.post(
+        "/tasks/analyse_ventes_alertes/execute",
+        json={"scenario_name": "scenario_a_normal"},
+    )
+    metrics = client.get(f"/executions/{exec_res.json()['id']}/metrics").json()
+    assert metrics["robustness_score"] is None
+    assert "robustness" in metrics["report"]["metadata"]["unmeasured"]
+
+
+def test_failed_execution_traces_the_real_failing_node(client):
+    exec_res = client.post(
+        "/tasks/analyse_ventes_alertes/execute",
+        json={"scenario_name": "scenario_d_corrupted"},
+    )
+    assert exec_res.status_code == 200
+    data = exec_res.json()
+    assert data["status"] == "failed"
+    assert "fetch_data" in data["error"]
+
+    traces = client.get(f"/executions/{data['id']}/trace").json()
+    failed = [t for t in traces if t["status"] == "failed"]
+    assert [t["node_id"] for t in failed] == ["fetch_data"]
+    assert failed[0]["fallbacks_triggered"] == ["retry", "escalation", "abort"]
+    assert failed[0]["tokens_input"] == 0  # nothing invented
+
+    metrics = client.get(f"/executions/{data['id']}/metrics").json()
+    assert metrics["composite_score"] == 0.0
+
+
+def test_csv_path_outside_data_dir_is_refused(client):
+    res = client.post(
+        "/tasks/analyse_ventes_alertes/execute",
+        json={"csv_path": "/etc/passwd"},
+    )
+    assert res.status_code == 400
+    # Nothing was executed nor stored for the refused request.
+    assert all(e["status"] != "running" for e in client.get("/executions").json())
+
+
+def test_task_without_pipeline_runs_its_subtasks_with_inputs(client):
+    _create_task(
+        client,
+        id="generic_task",
+        objective="Tâche générique",
+        subtasks=[
+            {"id": "step_1", "objective": "Première étape"},
+            {
+                "id": "step_2",
+                "objective": "Deuxième étape",
+                "model_tier_hint": "quality",
+                "dependencies": ["step_1"],
+            },
+        ],
+    )
+    res = client.post(
+        "/tasks/generic_task/execute", json={"inputs": {"customer": "ACME"}}
+    )
+    assert res.status_code == 200, res.text
+    state = res.json()["workflow_state"]
+    assert set(state["node_statuses"]) == {"step_1", "step_2"}
+    # Graph inputs reach the executors (MockExecutor echoes the input keys).
+    assert "customer" in state["node_outputs"]["step_1"]["input_keys"]
+    traces = {
+        t["node_id"]: t
+        for t in client.get(f"/executions/{res.json()['id']}/trace").json()
+    }
+    assert traces["step_2"]["model"] == "quality-pro"
 
 
 # ── Benchmark Stub S6 ─────────────────────────────────────────────────────────
 
+
 def test_benchmark_endpoints(client):
-    bench_res = client.post("/benchmark", json={"n_runs": 5, "scenarios": ["scenario_a", "scenario_b"]})
+    bench_res = client.post(
+        "/benchmark", json={"n_runs": 5, "scenarios": ["scenario_a", "scenario_b"]}
+    )
     assert bench_res.status_code == 202
-    bench_data = bench_res.json()
-    assert bench_data["status"] == "ACCEPTED"
-    bench_id = bench_data["id"]
-
-    results_res = client.get(f"/benchmark/{bench_id}/results")
-    assert results_res.status_code == 200
-    results_data = results_res.json()
-    assert results_data["id"] == bench_id
-
-    results_404 = client.get("/benchmark/invalid_bench_id/results")
-    assert results_404.status_code == 404
+    bench_id = bench_res.json()["id"]
+    assert client.get(f"/benchmark/{bench_id}/results").json()["id"] == bench_id
+    assert client.get("/benchmark/invalid_bench_id/results").status_code == 404
 
 
-# ── HITL Resume Endpoint ──────────────────────────────────────────────────────
+# ── Human-in-the-Loop ─────────────────────────────────────────────────────────
 
-def test_resume_execution_endpoint(client):
-    # 1. Create a task and execute it
-    task_payload = {
-        "id": "hitl_task",
-        "name": "Tâche HITL",
-        "objective": "Valider le point d'arrêt et de reprise",
-    }
-    client.post("/tasks", json=task_payload)
-    exec_res = client.post("/tasks/hitl_task/execute", json={"scenario_name": "scenario_b"})
-    assert exec_res.status_code == 200
-    exec_id = exec_res.json()["id"]
 
-    # 2. Resume execution with approval
-    resume_payload = {
-        "approved": True,
-        "comment": "Validation humaine accordée",
-    }
-    res = client.post(f"/executions/{exec_id}/resume", json=resume_payload)
-    assert res.status_code == 200
+def _start_hitl(client: TestClient) -> str:
+    res = client.post("/tasks/validation_budget_hitl/execute", json={})
+    assert res.status_code == 200, res.text
     data = res.json()
-    assert data["id"] == exec_id
+    assert data["status"] == "awaiting_approval"
+    pending = data["workflow_state"]["pending_approvals"]
+    assert pending[0]["node_id"] == "validation_manager"
+    # Nothing after the approval node ran yet.
+    assert "decaisser_fonds" not in data["workflow_state"]["node_statuses"]
+    exec_id: str = data["id"]
+    return exec_id
+
+
+def test_hitl_execution_pauses_and_resumes_on_approval(client):
+    exec_id = _start_hitl(client)
+
+    res = client.post(
+        f"/executions/{exec_id}/resume",
+        json={"approved": True, "comment": "Validation humaine accordée"},
+    )
+    assert res.status_code == 200, res.text
+    data = res.json()
     assert data["status"] == "completed"
-    assert "manual_resume" in data["workflow_state"]["human_approvals"]
-    assert data["workflow_state"]["human_approvals"]["manual_resume"]["approved"] is True
+    statuses = data["workflow_state"]["node_statuses"]
+    assert statuses["validation_manager"] == "completed"
+    assert statuses["decaisser_fonds"] == "completed"
+    approval = data["workflow_state"]["human_approvals"]["validation_manager"]
+    assert approval["before"]["comment"] == "Validation humaine accordée"
 
-    # 3. Resume non-existent execution 404
-    not_found = client.post("/executions/invalid_exec_id/resume", json=resume_payload)
-    assert not_found.status_code == 404
+    # Already completed: it cannot be resumed again.
+    again = client.post(f"/executions/{exec_id}/resume", json={"approved": True})
+    assert again.status_code == 409
 
+
+def test_hitl_rejection_skips_the_node(client):
+    exec_id = _start_hitl(client)
+    res = client.post(f"/executions/{exec_id}/resume", json={"approved": False})
+    assert res.status_code == 200
+    statuses = res.json()["workflow_state"]["node_statuses"]
+    assert statuses["validation_manager"] == "skipped"
+
+
+def test_resume_errors(client):
+    exec_res = client.post(
+        "/tasks/analyse_ventes_alertes/execute",
+        json={"scenario_name": "scenario_a_normal"},
+    )
+    completed_id = exec_res.json()["id"]
+    assert client.post(f"/executions/{completed_id}/resume", json={}).status_code == 409
+    assert client.post("/executions/invalid_exec_id/resume", json={}).status_code == 404
