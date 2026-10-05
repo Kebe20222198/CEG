@@ -133,6 +133,10 @@ class CEGNode(BaseModel):
             "allowing human review of the output. Requires a checkpointer."
         ),
     )
+    tools: list[str] = Field(
+        default_factory=list,
+        description="Tools this node uses (checked against the task's tools_allowed).",
+    )
     subgraph: CEGGraph | None = Field(
         default=None,
         description=(

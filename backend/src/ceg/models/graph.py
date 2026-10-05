@@ -12,6 +12,7 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ceg.models.node import CEGNode
+from ceg.models.task import CognitiveTask
 
 
 class EdgeType(str, Enum):
@@ -60,6 +61,13 @@ class CEGGraph(BaseModel):
     edges: list[CEGEdge] = Field(
         default_factory=list,
         description="Directed edges between nodes.",
+    )
+    task: CognitiveTask | None = Field(
+        default=None,
+        description=(
+            "The declaration this graph was planned from. Its constraints "
+            "(budget, latency, tools) are enforced when the graph runs."
+        ),
     )
 
     @field_validator("edges", mode="before")

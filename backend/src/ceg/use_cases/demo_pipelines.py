@@ -1,9 +1,10 @@
 """Demonstration pipelines for Advanced Control Flow mechanisms in CEG.
 
-Provides:
-  1. analyse_ventes_parallele: EdgeType.PARALLEL (fan-out / fan-in, multi-region)
-  2. redaction_rapport_iteratif: EdgeType.LOOP (iterative critique and refinement cycle)
-  3. validation_budget_hitl: Human-in-the-Loop (interrupt_before approval)
+Each pipeline is a CognitiveTask declaration; its graph comes from the
+planner. Provides:
+  1. analyse_ventes_parallele: independent sub-tasks → parallel fan-out / fan-in
+  2. redaction_rapport_iteratif: ``repeat`` → bounded critique/revision loop
+  3. validation_budget_hitl: ``requires_approval`` → human-in-the-loop
 """
 
 from __future__ import annotations
@@ -11,107 +12,75 @@ from __future__ import annotations
 from typing import Any
 
 from ceg.compiler.mock_executor import ExecutionError, ExecutionResult, MockExecutor
-from ceg.models.graph import CEGEdge, CEGGraph, EdgeType
-from ceg.models.node import CEGNode, ModelTierHint
-from ceg.models.task import CognitiveTask
+from ceg.models.graph import CEGGraph
+from ceg.models.task import CognitiveTask, RepeatSpec, SubTask, TaskConstraint
+from ceg.planner import plan
 
 # ── 1. Parallel Pipeline (Fan-out / Fan-in) ──────────────────────────────────
 
 
+def analyse_ventes_parallele() -> CognitiveTask:
+    """Déclaration : analyse multi-régions avec alerte conditionnelle.
+
+    Les trois extractions ne dépendent que de ``init`` : le planificateur
+    les exécute en parallèle sans qu'on le lui demande.
+    """
+    return CognitiveTask(
+        name="analyse_ventes_parallele",
+        objective=(
+            "Extraire en parallèle les données Nord, Sud et Est puis fusionner "
+            "dans un nœud de jointure."
+        ),
+        task_constraints=TaskConstraint(),
+        subtasks=[
+            SubTask(
+                id="init",
+                objective="Initialiser les paramètres de configuration multi-régions",
+                model_tier_hint="fast",
+            ),
+            *[
+                SubTask(
+                    id=f"fetch_{region.lower()}",
+                    objective=f"Extraire les transactions de la région {region}",
+                    dependencies=["init"],
+                    required_capabilities=["data_retrieval"],
+                    model_tier_hint="fast",
+                )
+                for region in ("Nord", "Sud", "Est")
+            ],
+            SubTask(
+                id="aggregate_multi",
+                objective="Fusionner et agréger les données des 3 régions en parallèle",
+                dependencies=["fetch_nord", "fetch_sud", "fetch_est"],
+                required_capabilities=["data_analysis"],
+                model_tier_hint="balanced",
+            ),
+            SubTask(
+                id="detect_anomaly",
+                objective="Détecter les chutes de volume régionales (> 20%)",
+                dependencies=["aggregate_multi"],
+                required_capabilities=["anomaly_detection"],
+                model_tier_hint="quality",
+            ),
+            SubTask(
+                id="generate_alert",
+                objective="Générer le rapport d'alerte exécutif",
+                run_if="detect_anomaly.anomalies_found",
+                required_capabilities=["text_generation"],
+                model_tier_hint="balanced",
+            ),
+        ],
+    )
+
+
 def build_parallel_sales_graph() -> CEGGraph:
-    """Build a parallel multi-region sales analysis pipeline.
+    """Plan the parallel multi-region sales analysis pipeline.
 
          ┌──→ fetch_nord ──┐
     init ┼──→ fetch_sud  ──┼──→ aggregate_multi → detect_anomaly → [COND] generate_alert
          └──→ fetch_est  ──┘
     """
-    nodes = [
-        CEGNode(
-            id="init",
-            objective="Initialiser les paramètres de configuration multi-régions",
-            task=CognitiveTask(objective="Paramétrer les requêtes régionales"),
-            model_tier_hint=ModelTierHint.FAST,
-        ),
-        CEGNode(
-            id="fetch_nord",
-            objective="Extraire les transactions de la région Nord",
-            dependencies=["init"],
-            task=CognitiveTask(objective="Extraction régionale Nord"),
-            required_capabilities=["data_retrieval"],
-            model_tier_hint=ModelTierHint.FAST,
-        ),
-        CEGNode(
-            id="fetch_sud",
-            objective="Extraire les transactions de la région Sud",
-            dependencies=["init"],
-            task=CognitiveTask(objective="Extraction régionale Sud"),
-            required_capabilities=["data_retrieval"],
-            model_tier_hint=ModelTierHint.FAST,
-        ),
-        CEGNode(
-            id="fetch_est",
-            objective="Extraire les transactions de la région Est",
-            dependencies=["init"],
-            task=CognitiveTask(objective="Extraction régionale Est"),
-            required_capabilities=["data_retrieval"],
-            model_tier_hint=ModelTierHint.FAST,
-        ),
-        CEGNode(
-            id="aggregate_multi",
-            objective="Fusionner et agréger les données des 3 régions en parallèle",
-            dependencies=["fetch_nord", "fetch_sud", "fetch_est"],
-            task=CognitiveTask(objective="Agréger les ventes consolidées"),
-            required_capabilities=["data_analysis"],
-            model_tier_hint=ModelTierHint.BALANCED,
-        ),
-        CEGNode(
-            id="detect_anomaly",
-            objective="Détecter les chutes de volume régionales (> 20%)",
-            dependencies=["aggregate_multi"],
-            task=CognitiveTask(objective="Calculer les écarts et anomalies"),
-            required_capabilities=["anomaly_detection"],
-            model_tier_hint=ModelTierHint.QUALITY,
-        ),
-        CEGNode(
-            id="generate_alert",
-            objective="Générer le rapport d'alerte exécutif",
-            dependencies=["detect_anomaly"],
-            task=CognitiveTask(objective="Rédiger la notification d'alerte"),
-            required_capabilities=["text_generation"],
-            model_tier_hint=ModelTierHint.BALANCED,
-        ),
-    ]
-
-    edges = [
-        # Fan-out : 3 branches parallèles depuis init
-        CEGEdge(source="init", target="fetch_nord", edge_type=EdgeType.PARALLEL),
-        CEGEdge(source="init", target="fetch_sud", edge_type=EdgeType.PARALLEL),
-        CEGEdge(source="init", target="fetch_est", edge_type=EdgeType.PARALLEL),
-        # Fan-in : convergence vers aggregate_multi
-        CEGEdge(
-            source="fetch_nord", target="aggregate_multi", edge_type=EdgeType.SEQUENTIAL
-        ),
-        CEGEdge(
-            source="fetch_sud", target="aggregate_multi", edge_type=EdgeType.SEQUENTIAL
-        ),
-        CEGEdge(
-            source="fetch_est", target="aggregate_multi", edge_type=EdgeType.SEQUENTIAL
-        ),
-        # Pipeline séquentiel et conditionnel
-        CEGEdge(
-            source="aggregate_multi",
-            target="detect_anomaly",
-            edge_type=EdgeType.SEQUENTIAL,
-        ),
-        CEGEdge(
-            source="detect_anomaly",
-            target="generate_alert",
-            edge_type=EdgeType.CONDITIONAL,
-            condition="anomalies_found",
-        ),
-    ]
-
-    return CEGGraph(nodes=nodes, edges=edges)
+    return plan(analyse_ventes_parallele())
 
 
 class ParallelSalesExecutor(MockExecutor):
@@ -194,8 +163,45 @@ class ParallelSalesExecutor(MockExecutor):
 # ── 2. Iterative Refinement Loop Pipeline (EdgeType.LOOP) ────────────────────
 
 
+def redaction_rapport_iteratif() -> CognitiveTask:
+    """Déclaration : rapport rédigé puis critiqué, révisé au plus 3 fois."""
+    return CognitiveTask(
+        name="redaction_rapport_iteratif",
+        objective=(
+            "Rédiger un rapport stratégique avec cycle d'auto-critique et "
+            "raffinement (max 3 boucles)."
+        ),
+        task_constraints=TaskConstraint(),
+        subtasks=[
+            SubTask(
+                id="rediger_brouillon",
+                objective="Rédiger ou réviser la synthèse stratégique trimestrielle",
+                model_tier_hint="quality",
+            ),
+            SubTask(
+                id="evaluer_critique",
+                objective="Évaluer la rigueur, le style et la conformité du rapport",
+                dependencies=["rediger_brouillon"],
+                required_capabilities=["evaluation", "reasoning"],
+                model_tier_hint="quality",
+                repeat=RepeatSpec(
+                    back_to="rediger_brouillon",
+                    while_key="needs_revision",
+                    max_iterations=3,
+                ),
+            ),
+            SubTask(
+                id="publier_rapport",
+                objective="Formater et exporter le rapport validé en version finale",
+                dependencies=["evaluer_critique"],
+                model_tier_hint="fast",
+            ),
+        ],
+    )
+
+
 def build_loop_report_graph() -> CEGGraph:
-    """Build an iterative report drafting pipeline with self-correction loop.
+    """Plan the iterative report drafting pipeline with self-correction loop.
 
     rediger_brouillon ──→ evaluer_critique ──[LOOP max 3]──┐
          ↑                                                 │
@@ -203,56 +209,7 @@ def build_loop_report_graph() -> CEGGraph:
                                │
                                └──[SEQUENTIAL]──→ publier_rapport
     """
-    nodes = [
-        CEGNode(
-            id="rediger_brouillon",
-            objective="Rédiger ou réviser la synthèse stratégique trimestrielle",
-            task=CognitiveTask(
-                objective="Rédaction du rapport avec prise en compte des critiques"
-            ),
-            model_tier_hint=ModelTierHint.QUALITY,
-        ),
-        CEGNode(
-            id="evaluer_critique",
-            objective="Évaluer la rigueur, le style et la conformité du rapport",
-            dependencies=["rediger_brouillon"],
-            task=CognitiveTask(objective="Analyse critique et notation qualité"),
-            required_capabilities=["evaluation", "reasoning"],
-            model_tier_hint=ModelTierHint.QUALITY,
-        ),
-        CEGNode(
-            id="publier_rapport",
-            objective="Formater et exporter le rapport validé en version finale",
-            dependencies=["evaluer_critique"],
-            task=CognitiveTask(objective="Publication et diffusion finale"),
-            model_tier_hint=ModelTierHint.FAST,
-        ),
-    ]
-
-    edges = [
-        CEGEdge(
-            source="rediger_brouillon",
-            target="evaluer_critique",
-            edge_type=EdgeType.SEQUENTIAL,
-        ),
-        # Loop edge with max 3 iterations
-        CEGEdge(
-            source="evaluer_critique",
-            target="rediger_brouillon",
-            edge_type=EdgeType.LOOP,
-            condition="needs_revision",
-            loop_max_iterations=3,
-        ),
-        # Exit edge
-        CEGEdge(
-            source="evaluer_critique",
-            target="publier_rapport",
-            edge_type=EdgeType.SEQUENTIAL,
-            condition="is_approved",
-        ),
-    ]
-
-    return CEGGraph(nodes=nodes, edges=edges)
+    return plan(redaction_rapport_iteratif())
 
 
 class LoopReportExecutor(MockExecutor):
@@ -317,49 +274,44 @@ class LoopReportExecutor(MockExecutor):
 # ── 3. Human-in-the-Loop Pipeline (HITL) ─────────────────────────────────────
 
 
+def validation_budget_hitl() -> CognitiveTask:
+    """Déclaration : aucun décaissement sans validation humaine."""
+    return CognitiveTask(
+        name="validation_budget_hitl",
+        objective=(
+            "Calculer les budgets alloués avec point d'arrêt obligatoire pour "
+            "validation humaine."
+        ),
+        task_constraints=TaskConstraint(),
+        subtasks=[
+            SubTask(
+                id="calculer_budget",
+                objective="Calculer les montants alloués par département",
+                model_tier_hint="fast",
+            ),
+            SubTask(
+                id="validation_manager",
+                objective="Validation humaine obligatoire avant décaissement (HITL)",
+                dependencies=["calculer_budget"],
+                requires_approval=True,
+                model_tier_hint="balanced",
+            ),
+            SubTask(
+                id="decaisser_fonds",
+                objective="Exécuter les virements bancaires départementaux",
+                dependencies=["validation_manager"],
+                model_tier_hint="fast",
+            ),
+        ],
+    )
+
+
 def build_hitl_budget_graph() -> CEGGraph:
-    """Build a budget allocation pipeline with human approval checkpoint.
+    """Plan the budget allocation pipeline with human approval checkpoint.
 
     calculer_budget ──→ validation_manager [HITL Interruption] ──→ decaisser_fonds
     """
-    nodes = [
-        CEGNode(
-            id="calculer_budget",
-            objective="Calculer les montants alloués par département",
-            task=CognitiveTask(objective="Calcul automatisé du budget prévisionnel"),
-            model_tier_hint=ModelTierHint.FAST,
-        ),
-        CEGNode(
-            id="validation_manager",
-            objective="Validation humaine obligatoire avant décaissement (HITL)",
-            dependencies=["calculer_budget"],
-            task=CognitiveTask(objective="Revue et signature par le responsable"),
-            interrupt_before=True,
-            model_tier_hint=ModelTierHint.BALANCED,
-        ),
-        CEGNode(
-            id="decaisser_fonds",
-            objective="Exécuter les virements bancaires départementaux",
-            dependencies=["validation_manager"],
-            task=CognitiveTask(objective="Ordre de virement automatisé"),
-            model_tier_hint=ModelTierHint.FAST,
-        ),
-    ]
-
-    edges = [
-        CEGEdge(
-            source="calculer_budget",
-            target="validation_manager",
-            edge_type=EdgeType.SEQUENTIAL,
-        ),
-        CEGEdge(
-            source="validation_manager",
-            target="decaisser_fonds",
-            edge_type=EdgeType.SEQUENTIAL,
-        ),
-    ]
-
-    return CEGGraph(nodes=nodes, edges=edges)
+    return plan(validation_budget_hitl())
 
 
 class HITLBudgetExecutor(MockExecutor):

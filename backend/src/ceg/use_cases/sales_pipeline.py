@@ -17,9 +17,9 @@ from typing import Any, TypeVar
 
 from ceg.compiler.compiler import CEGCompiler
 from ceg.compiler.mock_executor import ExecutionError, ExecutionResult, MockExecutor
-from ceg.models.graph import CEGEdge, CEGGraph, EdgeType
-from ceg.models.node import CEGNode, ModelTierHint
+from ceg.models.graph import CEGGraph
 from ceg.models.task import CognitiveTask, SubTask, TaskConstraint
+from ceg.planner import plan
 
 # ── Minimal SDK decorator ─────────────────────────────────────────────────────
 
@@ -128,6 +128,7 @@ def analyse_ventes_alertes() -> CognitiveTask:
                 required_capabilities=["aggregation", "computation"],
                 model_tier_hint="fast",
                 dependencies=["fetch_data"],
+                tools=["data_aggregator"],
             ),
             SubTask(
                 id="compute_trend",
@@ -148,7 +149,9 @@ def analyse_ventes_alertes() -> CognitiveTask:
                 objective="Rédiger et envoyer l'alerte pour les régions en anomalie",
                 required_capabilities=["notification", "summarization"],
                 model_tier_hint="balanced",
-                dependencies=["detect_anomaly"],
+                # Alerter uniquement si des anomalies ont été trouvées.
+                run_if="detect_anomaly.anomalies_found",
+                tools=["send_alert"],
             ),
         ],
     )
@@ -158,81 +161,13 @@ def analyse_ventes_alertes() -> CognitiveTask:
 
 
 def build_sales_graph() -> CEGGraph:
-    """Build the 5-node sales pipeline CEGGraph with a conditional edge.
+    """Plan the sales pipeline from its declaration.
 
-    Graph topology:
+    Graph topology (decided by the planner):
         fetch_data → aggregate_region → compute_trend → detect_anomaly
         →[CONDITIONAL: anomalies_found]→ generate_alert
     """
-    task = analyse_ventes_alertes()
-
-    nodes = [
-        CEGNode(
-            id="fetch_data",
-            objective="Charger et valider les données CSV de transactions",
-            required_capabilities=["data_reading", "validation"],
-            model_tier_hint=ModelTierHint.FAST,
-            task=task,
-        ),
-        CEGNode(
-            id="aggregate_region",
-            objective="Agréger les ventes par région et par mois",
-            dependencies=["fetch_data"],
-            required_capabilities=["aggregation", "computation"],
-            model_tier_hint=ModelTierHint.FAST,
-            task=task,
-        ),
-        CEGNode(
-            id="compute_trend",
-            objective="Calculer l'évolution mois-sur-mois par région",
-            dependencies=["aggregate_region"],
-            required_capabilities=["trend_analysis", "computation"],
-            model_tier_hint=ModelTierHint.BALANCED,
-            task=task,
-        ),
-        CEGNode(
-            id="detect_anomaly",
-            objective="Identifier les régions avec une chute de volume > 20%",
-            dependencies=["compute_trend"],
-            required_capabilities=["anomaly_detection", "reasoning"],
-            model_tier_hint=ModelTierHint.QUALITY,
-            task=task,
-        ),
-        CEGNode(
-            id="generate_alert",
-            objective="Rédiger et envoyer l'alerte pour les régions en anomalie",
-            dependencies=["detect_anomaly"],
-            required_capabilities=["notification", "summarization"],
-            model_tier_hint=ModelTierHint.BALANCED,
-            task=task,
-        ),
-    ]
-
-    edges = [
-        CEGEdge(
-            source="fetch_data",
-            target="aggregate_region",
-            edge_type=EdgeType.SEQUENTIAL,
-        ),
-        CEGEdge(
-            source="aggregate_region",
-            target="compute_trend",
-            edge_type=EdgeType.SEQUENTIAL,
-        ),
-        CEGEdge(
-            source="compute_trend",
-            target="detect_anomaly",
-            edge_type=EdgeType.SEQUENTIAL,
-        ),
-        CEGEdge(
-            source="detect_anomaly",
-            target="generate_alert",
-            edge_type=EdgeType.CONDITIONAL,
-            condition="anomalies_found",
-        ),
-    ]
-
-    return CEGGraph(nodes=nodes, edges=edges)
+    return plan(analyse_ventes_alertes())
 
 
 def build_sales_executor(csv_path: str | None = None) -> SalesExecutor:

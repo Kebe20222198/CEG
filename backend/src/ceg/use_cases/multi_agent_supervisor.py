@@ -12,217 +12,156 @@ from __future__ import annotations
 from typing import Any
 
 from ceg.compiler.mock_executor import ExecutionError, ExecutionResult, MockExecutor
-from ceg.models.graph import CEGEdge, CEGGraph, EdgeType
-from ceg.models.node import CEGNode, ModelTierHint
-from ceg.models.task import CognitiveTask
+from ceg.models.graph import CEGGraph
+from ceg.models.task import CognitiveTask, RepeatSpec, SubTask, TaskConstraint
+from ceg.planner import plan, plan_subtasks
 
-# ── Subgraph 1: Research Team ────────────────────────────────────────────────
+# ── Team 1: Research Team ────────────────────────────────────────────────────
 
 
-def build_research_team_subgraph() -> CEGGraph:
-    """Build the inner Research Team subgraph with parallel sources.
+def research_team_subtasks() -> list[SubTask]:
+    """Research team: web and database sources searched in parallel.
 
          ┌──→ web_search_agent ──┐
     init ┤                       ├──→ merge_research
          └──→ db_extractor_agent ┘
     """
-    nodes = [
-        CEGNode(
+    return [
+        SubTask(
             id="research_init",
             objective="Initialiser les paramètres de recherche contextuelle",
-            task=CognitiveTask(objective="Paramétrage des sources documentaires"),
-            model_tier_hint=ModelTierHint.FAST,
+            model_tier_hint="fast",
         ),
-        CEGNode(
+        SubTask(
             id="web_search_agent",
             objective="Recherche documentaire web et veille concurrentielle",
             dependencies=["research_init"],
-            task=CognitiveTask(objective="Extraction web et actualités"),
             required_capabilities=["web_search", "information_retrieval"],
-            model_tier_hint=ModelTierHint.FAST,
+            model_tier_hint="fast",
         ),
-        CEGNode(
+        SubTask(
             id="db_extractor_agent",
             objective="Extraction des métriques internes et historique SQL",
             dependencies=["research_init"],
-            task=CognitiveTask(objective="Interrogation des bases internes"),
             required_capabilities=["data_retrieval"],
-            model_tier_hint=ModelTierHint.FAST,
+            model_tier_hint="fast",
         ),
-        CEGNode(
+        SubTask(
             id="merge_research",
             objective="Consolider et dédupliquer les sources de recherche",
             dependencies=["web_search_agent", "db_extractor_agent"],
-            task=CognitiveTask(objective="Synthèse des éléments de recherche"),
             required_capabilities=["data_analysis"],
-            model_tier_hint=ModelTierHint.BALANCED,
+            model_tier_hint="balanced",
         ),
     ]
 
-    edges = [
-        CEGEdge(
-            source="research_init",
-            target="web_search_agent",
-            edge_type=EdgeType.PARALLEL,
-        ),
-        CEGEdge(
-            source="research_init",
-            target="db_extractor_agent",
-            edge_type=EdgeType.PARALLEL,
-        ),
-        CEGEdge(
-            source="web_search_agent",
-            target="merge_research",
-            edge_type=EdgeType.SEQUENTIAL,
-        ),
-        CEGEdge(
-            source="db_extractor_agent",
-            target="merge_research",
-            edge_type=EdgeType.SEQUENTIAL,
-        ),
-    ]
 
-    return CEGGraph(nodes=nodes, edges=edges)
+# ── Team 2: Analytics & Quality Team ─────────────────────────────────────────
 
 
-# ── Subgraph 2: Analytics & Quality Team ─────────────────────────────────────
-
-
-def build_analytics_team_subgraph() -> CEGGraph:
-    """Build the inner Analytics Team subgraph with self-critique loop.
+def analytics_team_subtasks() -> list[SubTask]:
+    """Analytics team: analysis audited and recomputed at most twice.
 
     model_analysis ──→ quality_audit ──[LOOP max 2]──┐
           ↑                                          │
           └──────────────────────────────────────────┘
                               │
-                              └──[SEQUENTIAL]──→ formatted_insights
+                              └──→ formatted_insights
     """
-    nodes = [
-        CEGNode(
+    return [
+        SubTask(
             id="model_analysis",
             objective="Calculer les projections financières et analyses d'impact",
-            task=CognitiveTask(objective="Modélisation statistique et financière"),
-            model_tier_hint=ModelTierHint.QUALITY,
+            model_tier_hint="quality",
         ),
-        CEGNode(
+        SubTask(
             id="quality_audit",
             objective="Audit de cohérence et vérification des hypothèses",
             dependencies=["model_analysis"],
-            task=CognitiveTask(objective="Vérification méthodologique"),
             required_capabilities=["reasoning", "evaluation"],
-            model_tier_hint=ModelTierHint.QUALITY,
+            model_tier_hint="quality",
+            repeat=RepeatSpec(
+                back_to="model_analysis",
+                while_key="needs_recalculation",
+                max_iterations=2,
+            ),
         ),
-        CEGNode(
+        SubTask(
             id="formatted_insights",
             objective="Mise en forme des recommandations actionnables",
             dependencies=["quality_audit"],
-            task=CognitiveTask(objective="Formatage exécutif"),
-            model_tier_hint=ModelTierHint.FAST,
+            model_tier_hint="fast",
         ),
     ]
 
-    edges = [
-        CEGEdge(
-            source="model_analysis",
-            target="quality_audit",
-            edge_type=EdgeType.SEQUENTIAL,
-        ),
-        CEGEdge(
-            source="quality_audit",
-            target="model_analysis",
-            edge_type=EdgeType.LOOP,
-            condition="needs_recalculation",
-            loop_max_iterations=2,
-        ),
-        CEGEdge(
-            source="quality_audit",
-            target="formatted_insights",
-            edge_type=EdgeType.SEQUENTIAL,
-            condition="is_valid",
-        ),
-    ]
 
-    return CEGGraph(nodes=nodes, edges=edges)
+def build_research_team_subgraph() -> CEGGraph:
+    """Plan the research team on its own (sub-graph of the supervisor)."""
+    return plan_subtasks(research_team_subtasks(), tools_allowed=[])
 
 
-# ── Top-Level Hierarchical Multi-Agent Graph ─────────────────────────────────
+def build_analytics_team_subgraph() -> CEGGraph:
+    """Plan the analytics team on its own (sub-graph of the supervisor)."""
+    return plan_subtasks(analytics_team_subtasks(), tools_allowed=[])
+
+
+# ── Top-Level Hierarchical Multi-Agent Task ──────────────────────────────────
+
+
+def supervision_strategique() -> CognitiveTask:
+    """Déclaration : un superviseur délègue à deux équipes autonomes.
+
+    Chaque équipe est une sous-tâche dont les propres sous-tâches deviennent
+    un sous-graphe.
+    """
+    return CognitiveTask(
+        name="multi_agent_supervisor",
+        objective=(
+            "Superviser des équipes spécialisées autonomes (Recherche & Analyse) "
+            "encapsulées dans des sous-graphes."
+        ),
+        task_constraints=TaskConstraint(),
+        subtasks=[
+            SubTask(
+                id="supervisor_dispatch",
+                objective=(
+                    "Superviser l'analyse globale et déléguer aux équipes spécialisées"
+                ),
+                model_tier_hint="quality",
+            ),
+            SubTask(
+                id="research_team",
+                objective="Équipe Recherche : Collecte multi-sources et veille",
+                dependencies=["supervisor_dispatch"],
+                model_tier_hint="balanced",
+                subtasks=research_team_subtasks(),
+            ),
+            SubTask(
+                id="analytics_team",
+                objective="Équipe Analyse & Risques : Modélisation et audit itératif",
+                dependencies=["research_team"],
+                model_tier_hint="quality",
+                subtasks=analytics_team_subtasks(),
+            ),
+            SubTask(
+                id="executive_summary",
+                objective=(
+                    "Consolider la synthèse décisionnelle finale pour la direction"
+                ),
+                dependencies=["analytics_team"],
+                model_tier_hint="quality",
+            ),
+        ],
+    )
 
 
 def build_hierarchical_supervisor_graph() -> CEGGraph:
-    """Build the top-level supervisor graph with 2 team subgraphs.
+    """Plan the supervisor with its two team sub-graphs.
 
-    supervisor_dispatch
-          │
-          ├──→ research_team_subgraph [Composite Subgraph Node]
-          │             │
-          │             ↓
-          └──→ analytics_team_subgraph [Composite Subgraph Node]
-                        │
-                        ↓
-                 executive_summary
+    supervisor_dispatch → research_team [sub-graph]
+                        → analytics_team [sub-graph] → executive_summary
     """
-    research_sub = build_research_team_subgraph()
-    analytics_sub = build_analytics_team_subgraph()
-
-    nodes = [
-        CEGNode(
-            id="supervisor_dispatch",
-            objective=(
-                "Superviser l'analyse globale et déléguer aux équipes spécialisées"
-            ),
-            task=CognitiveTask(
-                objective="Planification stratégique et orchestration hiérarchique"
-            ),
-            model_tier_hint=ModelTierHint.QUALITY,
-        ),
-        CEGNode(
-            id="research_team",
-            objective="Équipe Recherche : Collecte multi-sources et veille",
-            dependencies=["supervisor_dispatch"],
-            task=CognitiveTask(
-                objective="Exécution du sous-graphe de recherche documentaire"
-            ),
-            subgraph=research_sub,
-            model_tier_hint=ModelTierHint.BALANCED,
-        ),
-        CEGNode(
-            id="analytics_team",
-            objective="Équipe Analyse & Risques : Modélisation et audit itératif",
-            dependencies=["research_team"],
-            task=CognitiveTask(
-                objective="Exécution du sous-graphe d'analyse prédictive"
-            ),
-            subgraph=analytics_sub,
-            model_tier_hint=ModelTierHint.QUALITY,
-        ),
-        CEGNode(
-            id="executive_summary",
-            objective="Consolider la synthèse décisionnelle finale pour la direction",
-            dependencies=["analytics_team"],
-            task=CognitiveTask(objective="Rédaction du briefing exécutif final"),
-            model_tier_hint=ModelTierHint.QUALITY,
-        ),
-    ]
-
-    edges = [
-        CEGEdge(
-            source="supervisor_dispatch",
-            target="research_team",
-            edge_type=EdgeType.SEQUENTIAL,
-        ),
-        CEGEdge(
-            source="research_team",
-            target="analytics_team",
-            edge_type=EdgeType.SEQUENTIAL,
-        ),
-        CEGEdge(
-            source="analytics_team",
-            target="executive_summary",
-            edge_type=EdgeType.SEQUENTIAL,
-        ),
-    ]
-
-    return CEGGraph(nodes=nodes, edges=edges)
+    return plan(supervision_strategique())
 
 
 # ── Hierarchical Supervisor Executor ─────────────────────────────────────────
