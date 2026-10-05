@@ -44,3 +44,15 @@ htmlcov/
 .idea/
 *.swp
 *.swo
+
+# Local databases (SQLite) and their backups
+*.db
+*.db.bak*
+
+# Frontend
+node_modules/
+frontend/dist/
+
+# OS & local tool settings
+.DS_Store
+.claude/settings.local.json

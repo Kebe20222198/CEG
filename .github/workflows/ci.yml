@@ -7,8 +7,11 @@ on:
     branches: [ main, master ]
 
 jobs:
-  lint-and-test:
+  backend:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
@@ -33,7 +36,32 @@ jobs:
         run: ruff format --check .
 
       - name: Run MyPy Type Check
-        run: mypy src
+        run: mypy
 
       - name: Run Pytest with Coverage
-        run: pytest --cov=ceg --cov-report=xml --cov-report=term-missing tests/
+        run: pytest --cov=ceg --cov=api --cov-report=xml --cov-report=term-missing
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
