@@ -136,6 +136,10 @@ class EvaluationReport(BaseModel):
         weights: Dict with keys wc, wl, wq, wr used for composite score.
         max_budget_usd: Budget ceiling used in composite score computation.
         max_latency_seconds: Latency ceiling used in composite score computation.
+        constraint_violations: Declared constraints the run did not meet
+            (e.g. a quality below ``min_quality_score``).
+        constraints_unverified: Declared constraints that could not be
+            checked because the dimension was not measured.
         metadata: Arbitrary extra context (e.g. fixture path, run count).
     """
 
@@ -152,7 +156,14 @@ class EvaluationReport(BaseModel):
     )
     max_budget_usd: float = Field(default=0.50, gt=0.0)
     max_latency_seconds: float = Field(default=15.0, gt=0.0)
+    constraint_violations: list[str] = Field(default_factory=list)
+    constraints_unverified: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def meets_constraints(self) -> bool:
+        """True when no declared constraint was violated."""
+        return not self.constraint_violations
 
 
 class RobustnessReport(BaseModel):

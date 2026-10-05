@@ -24,6 +24,15 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
+from ceg.backends.common import (
+    check_graph,
+    execute_node,
+    hitl_node_ids,
+    initial_state,
+    loop_id,
+    prepare_engine,
+    skip_update,
+)
 from ceg.compiler.mock_executor import Executor, MockExecutor
 from ceg.compiler.state import CEGState
 from ceg.models.graph import CognitiveExecutionGraph, EdgeType
@@ -115,19 +124,7 @@ class CompiledWorkflow:
     @staticmethod
     def _initial_state(overrides: dict[str, Any] | None) -> dict[str, Any]:
         """Default CEGState values, updated with ``overrides``."""
-        default_state: dict[str, Any] = {
-            "inputs": {},
-            "node_outputs": {},
-            "node_statuses": {},
-            "total_cost": 0.0,
-            "total_latency_ms": 0.0,
-            "execution_log": [],
-            "loop_counts": {},
-            "human_approvals": {},
-        }
-        if overrides:
-            default_state.update(overrides)
-        return default_state
+        return initial_state(overrides)
 
     def resume(
         self,
@@ -174,6 +171,11 @@ class CompiledWorkflow:
             raise RuntimeError("Cannot get state: no checkpointer configured.")
         config = {"configurable": {"thread_id": thread_id}}
         return self._runnable.get_state(config)
+
+    def discard(self, thread_id: str) -> None:
+        """Forget the saved state of ``thread_id`` once the run is over."""
+        if self._has_checkpointer:
+            self._runnable.checkpointer.delete_thread(thread_id)
 
 
 class CEGCompiler:
@@ -242,7 +244,7 @@ class CEGCompiler:
                 no checkpointer is given and ``ignore_interrupts`` is False.
         """
         self._validate(ceg)
-        hitl_nodes = self._hitl_node_ids(ceg)
+        hitl_nodes = hitl_node_ids(ceg)
         if hitl_nodes and checkpointer is None and not ignore_interrupts:
             raise ValueError(
                 f"Nodes {hitl_nodes} require human approval "
@@ -250,7 +252,8 @@ class CEGCompiler:
                 "given. Pass checkpointer=MemorySaver() (or another LangGraph "
                 "checkpointer), or ignore_interrupts=True to run them unattended."
             )
-        engine = self._engine or RuntimeDecisionEngine()
+        engine = prepare_engine(ceg, self._engine)
+        check_graph(ceg, engine)
         execution_order = self._topological_sort(ceg)
         workflow = self._inject_runtime(
             ceg, execution_order, engine=engine, checkpointer=checkpointer
@@ -279,17 +282,6 @@ class CEGCompiler:
         )
 
     # ── internal steps ────────────────────────────────────────────────
-
-    @classmethod
-    def _hitl_node_ids(cls, ceg: CognitiveExecutionGraph) -> list[str]:
-        """Return the IDs of interrupt nodes, including those in subgraphs."""
-        found: list[str] = []
-        for node in ceg.nodes:
-            if node.interrupt_before or node.interrupt_after:
-                found.append(node.id)
-            if node.subgraph is not None:
-                found.extend(cls._hitl_node_ids(node.subgraph))
-        return found
 
     def _validate(self, ceg: CognitiveExecutionGraph) -> None:
         """Validate the CEG for compilation.
@@ -439,7 +431,7 @@ class CEGCompiler:
         loop_edges = [e for e in ceg.edges if e.edge_type == EdgeType.LOOP]
         loop_ids_by_node: dict[str, list[str]] = defaultdict(list)
         for edge in loop_edges:
-            loop_ids_by_node[edge.source].append(f"loop_{edge.source}_{edge.target}")
+            loop_ids_by_node[edge.source].append(loop_id(edge))
 
         for node_id in order:
             node = node_map[node_id]
@@ -601,7 +593,7 @@ class CEGCompiler:
                     (
                         edge.condition or "should_loop",
                         edge.target,
-                        f"loop_{edge.source}_{edge.target}",
+                        loop_id(edge),
                         edge.loop_max_iterations or 10,
                     )
                 )
@@ -678,25 +670,9 @@ class CEGCompiler:
                 if approval is False or (
                     isinstance(approval, dict) and not approval.get("approved", True)
                 ):
-                    return {
-                        "node_outputs": {node.id: None},
-                        "node_statuses": {node.id: "skipped"},
-                        "total_cost": 0.0,
-                        "total_latency_ms": 0.0,
-                        "execution_log": [
-                            {
-                                "node_id": node.id,
-                                "status": "skipped",
-                                "output": None,
-                                "cost": 0.0,
-                                "latency_ms": 0.0,
-                                "confidence": 0.0,
-                                "model_used": None,
-                                "reason": "Human rejected before execution",
-                            }
-                        ],
-                        "human_approvals": {node.id: {"before": approval}},
-                    }
+                    rejected = skip_update(node.id, "Human rejected before execution")
+                    rejected["human_approvals"] = {node.id: {"before": approval}}
+                    return rejected
                 # Record approval
                 state_update_approval: dict[str, Any] = {
                     "human_approvals": {node.id: {"before": approval}},
@@ -704,22 +680,22 @@ class CEGCompiler:
             else:
                 state_update_approval = {}
 
-            # ── Execute the node (Subgraph or Single Node) ─────────────
-            result: dict[str, Any]
-            if node.is_subgraph and node.subgraph is not None:
-                result = self._run_subgraph(
-                    node, node.subgraph, state, engine, executor, checkpointer
+            # ── Execute the node (shared by every backend) ─────────────
+            def run_subgraph(
+                subgraph: CognitiveExecutionGraph, inputs: dict[str, Any]
+            ) -> dict[str, Any]:
+                return self._run_subgraph(
+                    subgraph, inputs, engine, executor, checkpointer
                 )
-            else:
-                result = engine.run_node(node=node, state=state, executor=executor)
 
-            # Increment loop counter if this node is a loop source
-            if loops:
-                loop_counts_update: dict[str, int] = {}
-                for lid in loops:
-                    current_c = state.get("loop_counts", {}).get(lid, 0)
-                    loop_counts_update[lid] = current_c + 1
-                result["loop_counts"] = loop_counts_update
+            result = execute_node(
+                node,
+                state,
+                engine,
+                executor,
+                loop_ids=loops,
+                run_subgraph=run_subgraph,
+            )
 
             # Merge approval info into result
             if state_update_approval:
@@ -758,18 +734,17 @@ class CEGCompiler:
 
     def _run_subgraph(
         self,
-        node: CEGNode,
         subgraph: CognitiveExecutionGraph,
-        state: dict[str, Any],
+        inputs: dict[str, Any],
         engine: RuntimeDecisionEngine,
         executor: Executor,
         checkpointer: Any | None,
     ) -> dict[str, Any]:
-        """Execute ``subgraph`` as the body of the composite node ``node``.
+        """Run ``subgraph`` from inside its composite node; return its state.
 
         The subgraph shares the parent's engine (and so its budget) and
-        receives the parent's graph inputs and upstream node outputs as its
-        own graph inputs. It reuses the parent's checkpointer so that its HITL
+        receives the parent's graph inputs and upstream outputs as its own
+        graph inputs. It reuses the parent's checkpointer so that its HITL
         nodes stay interruptible; the parent's ``compile()`` has already
         refused inner HITL nodes when there is no checkpointer.
         """
@@ -783,51 +758,7 @@ class CEGCompiler:
             checkpointer=checkpointer,
             ignore_interrupts=checkpointer is None,
         )
-
-        sub_inputs: dict[str, Any] = {
-            **state.get("inputs", {}),
-            **state.get("node_outputs", {}),
-        }
-        sub_result = compiled_sub._invoke_nested({"inputs": sub_inputs})
-
-        sub_outputs = sub_result.get("node_outputs", {})
-        sub_statuses: dict[str, str] = sub_result.get("node_statuses", {})
-        sub_cost = float(sub_result.get("total_cost", 0.0))
-        sub_latency = float(sub_result.get("total_latency_ms", 0.0))
-
-        # Tag inner logs with subgraph_parent
-        enriched_sub_log: list[dict[str, Any]] = [
-            {**entry, "subgraph_parent": node.id}
-            for entry in sub_result.get("execution_log", [])
-        ]
-
-        # A branch skipped by a condition is a normal outcome, not a failure.
-        parent_status = (
-            "completed"
-            if all(st in ("completed", "skipped") for st in sub_statuses.values())
-            else "failed"
-        )
-
-        # Summary log entry for the parent node
-        enriched_sub_log.append(
-            {
-                "node_id": node.id,
-                "status": parent_status,
-                "output": sub_outputs,
-                "cost": sub_cost,
-                "latency_ms": sub_latency,
-                "confidence": 1.0,
-                "model_used": "subgraph_composite",
-            }
-        )
-
-        return {
-            "node_outputs": {node.id: sub_outputs},
-            "node_statuses": {node.id: parent_status},
-            "total_cost": sub_cost,
-            "total_latency_ms": sub_latency,
-            "execution_log": enriched_sub_log,
-        }
+        return compiled_sub._invoke_nested({"inputs": inputs})
 
     @staticmethod
     def _make_conditional_router(
@@ -894,11 +825,11 @@ class CEGCompiler:
             output = state.get("node_outputs", {}).get(source_id)
             counts = state.get("loop_counts", {})
 
-            for condition_key, target_id, loop_id, max_iterations in branches:
+            for condition_key, target_id, counter, max_iterations in branches:
                 should_loop = isinstance(output, dict) and bool(
                     output.get(condition_key, False)
                 )
-                if should_loop and counts.get(loop_id, 0) <= max_iterations:
+                if should_loop and counts.get(counter, 0) <= max_iterations:
                     return [target_id]
 
             return list(continue_targets)
@@ -911,26 +842,10 @@ class CEGCompiler:
 
         Used as the "false" branch of a conditional edge: when the condition
         is not met, this handler records a ``skipped`` status for the target
-        node and the graph terminates cleanly.
+        node and hands over to whatever the skipped node fed into.
         """
 
         def _skip_fn(state: dict[str, Any]) -> dict[str, Any]:
-            return {
-                "node_outputs": {target_id: None},
-                "node_statuses": {target_id: "skipped"},
-                "total_cost": 0.0,
-                "total_latency_ms": 0.0,
-                "execution_log": [
-                    {
-                        "node_id": target_id,
-                        "status": "skipped",
-                        "output": None,
-                        "cost": 0.0,
-                        "latency_ms": 0.0,
-                        "confidence": 0.0,
-                        "model_used": None,
-                    }
-                ],
-            }
+            return skip_update(target_id)
 
         return _skip_fn

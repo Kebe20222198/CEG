@@ -1,5 +1,20 @@
-"""Cognitive Execution Graph (CEG) package."""
+"""Cognitive Execution Graph (CEG).
 
+A declarative layer for agentic workflows, independent of the orchestration
+framework, the infrastructure and the LLM provider: a CognitiveTask states the
+business objective and its constraints; the planner turns it into an
+execution graph; the Runtime Decision Engine picks the models; a backend
+(LangGraph, plain Python, ...) runs it — much as SQL separates a query from
+how the database executes it.
+"""
+
+from ceg.backends import (
+    DEFAULT_BACKEND,
+    Backend,
+    Workflow,
+    available_backends,
+    get_backend,
+)
 from ceg.compiler.compiler import CEGCompiler, CompiledWorkflow
 from ceg.compiler.mock_executor import ExecutionError, ExecutionResult, MockExecutor
 from ceg.compiler.state import CEGState
@@ -20,7 +35,8 @@ from ceg.models.node import (
     ModelTierHint,
     NodeStatus,
 )
-from ceg.models.task import CognitiveTask, SubTask, TaskConstraint
+from ceg.models.task import CognitiveTask, RepeatSpec, SubTask, TaskConstraint
+from ceg.planner import PlanningError, plan
 from ceg.runtime.decision_engine import (
     DEFAULT_MODEL_REGISTRY,
     Constraint,
@@ -41,6 +57,14 @@ from ceg.runtime.fallback import (
 __version__ = "0.5.0"
 
 __all__ = [
+    # Planner & backends
+    "DEFAULT_BACKEND",
+    "Backend",
+    "PlanningError",
+    "Workflow",
+    "available_backends",
+    "get_backend",
+    "plan",
     # Compiler
     "CEGCompiler",
     "CEGState",
@@ -58,6 +82,7 @@ __all__ = [
     "ExecutionRecord",
     "ModelTierHint",
     "NodeStatus",
+    "RepeatSpec",
     "SubTask",
     "TaskConstraint",
     # Runtime — Decision Engine

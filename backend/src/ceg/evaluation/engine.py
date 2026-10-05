@@ -30,6 +30,7 @@ from ceg.evaluation.models import (
     NodeEvaluation,
     RobustnessReport,
 )
+from ceg.models.task import TaskConstraint
 
 # ── Default composite score weights ──────────────────────────────────────────
 
@@ -178,6 +179,7 @@ class EvaluationEngine:
         scenario_name: str = "unnamed",
         n_runs: int = 20,
         inputs: dict[str, Any] | None = None,
+        backend: str = "langgraph",
     ) -> RobustnessReport:
         """Execute the pipeline N times and measure success rate.
 
@@ -195,11 +197,14 @@ class EvaluationEngine:
             scenario_name: Label for the report.
             n_runs: Number of runs (default 20; use smaller value in tests).
             inputs: Graph inputs passed to every run (e.g. ``csv_path``).
+            backend: Name of the execution backend (see ``ceg.backends``).
 
         Returns:
             RobustnessReport with success_rate, failure_reasons, mean metrics.
         """
-        from ceg.compiler.compiler import CEGCompiler
+        from ceg.backends import get_backend
+
+        runner = get_backend(backend)
 
         n_success = 0
         n_failure = 0
@@ -212,8 +217,9 @@ class EvaluationEngine:
             try:
                 graph = build_fn()
                 executor = executor_factory()
-                compiler = CEGCompiler(executor=executor)
-                workflow = compiler.compile(graph, ignore_interrupts=True)
+                workflow = runner.compile(
+                    graph, executor=executor, ignore_interrupts=True
+                )
                 state = workflow.invoke({"inputs": dict(inputs or {})})
                 n_success += 1
                 costs.append(float(state.get("total_cost", 0.0)))
@@ -320,6 +326,7 @@ class EvaluationEngine:
         max_latency_seconds: float = 15.0,
         robustness_score: float | None = None,
         criteria: list[Criterion] | None = None,
+        constraints: TaskConstraint | None = None,
     ) -> EvaluationReport:
         """Full evaluation pipeline — cost + latency + quality + composite.
 
@@ -335,10 +342,18 @@ class EvaluationEngine:
                 ``measure_robustness()``. Defaults to None: a single run says
                 nothing about robustness, so it is reported as unmeasured.
             criteria: Override criteria list.
+            constraints: The task's declared constraints. When given, they
+                set ``max_budget_usd`` / ``max_latency_seconds`` and the
+                run is checked against them (``constraint_violations``,
+                ``constraints_unverified``).
 
         Returns:
             EvaluationReport with all metrics populated.
         """
+        if constraints is not None:
+            max_budget_usd = constraints.max_cost_usd
+            max_latency_seconds = constraints.max_latency_seconds
+
         # 1. Cost & latency
         total_cost_usd = self.measure_cost(workflow_state)
         total_latency_ms = self.measure_latency(workflow_state)
@@ -377,6 +392,10 @@ class EvaluationEngine:
             max_latency_seconds=max_latency_seconds,
         )
 
+        violations, unverified = _check_constraints(
+            constraints, total_cost_usd, total_latency_seconds, quality_score
+        )
+
         return EvaluationReport(
             scenario_name=scenario_name,
             node_evaluations=node_evaluations,
@@ -389,6 +408,8 @@ class EvaluationEngine:
             weights=dict(self.weights),
             max_budget_usd=max_budget_usd,
             max_latency_seconds=max_latency_seconds,
+            constraint_violations=violations,
+            constraints_unverified=unverified,
             metadata={
                 "scenario": scenario_name,
                 "judge": type(self.judge).__name__,
@@ -416,6 +437,36 @@ class EvaluationEngine:
 
 
 # ── Module-level helper ───────────────────────────────────────────────────────
+
+
+def _check_constraints(
+    constraints: TaskConstraint | None,
+    cost_usd: float,
+    latency_seconds: float,
+    quality_score: float | None,
+) -> tuple[list[str], list[str]]:
+    """Compare a run with its declared constraints → (violations, unverified)."""
+    if constraints is None:
+        return [], []
+    violations: list[str] = []
+    unverified: list[str] = []
+    if cost_usd > constraints.max_cost_usd + 1e-9:
+        violations.append(
+            f"cost {cost_usd:.4f} USD > max_cost_usd {constraints.max_cost_usd:.4f}"
+        )
+    if latency_seconds > constraints.max_latency_seconds + 1e-9:
+        violations.append(
+            f"latency {latency_seconds:.3f} s > max_latency_seconds "
+            f"{constraints.max_latency_seconds:.3f}"
+        )
+    if quality_score is None:
+        unverified.append("min_quality_score")
+    elif quality_score < constraints.min_quality_score:
+        violations.append(
+            f"quality {quality_score:.3f} < min_quality_score "
+            f"{constraints.min_quality_score:.3f}"
+        )
+    return violations, unverified
 
 
 def _clip(value: float) -> float:
