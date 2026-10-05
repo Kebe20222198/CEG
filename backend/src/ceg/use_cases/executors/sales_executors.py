@@ -251,13 +251,18 @@ def execute_generate_alert(
     node_id: str,
     objective: str,
     inputs: dict[str, Any],
+    now: datetime | None = None,
 ) -> ExecutionResult:
-    """Generate a text alert message from detected anomalies."""
+    """Generate a text alert message from detected anomalies.
+
+    ``now`` is the generation date printed in the alert (defaults to the
+    current time); pass a fixed value for reproducible outputs.
+    """
     anomaly_output: dict[str, Any] = inputs.get("detect_anomaly", {})
     anomalies: list[dict[str, Any]] = anomaly_output.get("anomalies", [])
     threshold_pct: float = anomaly_output.get("threshold_pct", _ANOMALY_THRESHOLD_PCT)
 
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now_str = (now or datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
 
     anomaly_lines = "\n".join(
         f"  • {a['region']} : {a['variation_pct']:.1f}% "

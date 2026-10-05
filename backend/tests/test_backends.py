@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -36,10 +37,23 @@ from ceg.use_cases.sales_pipeline import SalesExecutor, build_sales_graph
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
+# The sales alert prints its generation date: both backends must see the same
+# clock, otherwise two runs straddling a second boundary differ.
+FIXED_NOW = datetime(2024, 2, 1, 9, 0, 0)
+
+
+def _sales_executor() -> MockExecutor:
+    return SalesExecutor(clock=lambda: FIXED_NOW)
+
+
 CASES: dict[str, tuple[Callable[[], CEGGraph], Callable[[], MockExecutor], str]] = {
-    "sales_a": (build_sales_graph, SalesExecutor, "scenario_a_normal.csv"),
-    "sales_b": (build_sales_graph, SalesExecutor, "scenario_b_single_anomaly.csv"),
-    "sales_c": (build_sales_graph, SalesExecutor, "scenario_c_multiple_anomalies.csv"),
+    "sales_a": (build_sales_graph, _sales_executor, "scenario_a_normal.csv"),
+    "sales_b": (build_sales_graph, _sales_executor, "scenario_b_single_anomaly.csv"),
+    "sales_c": (
+        build_sales_graph,
+        _sales_executor,
+        "scenario_c_multiple_anomalies.csv",
+    ),
     "parallel": (build_parallel_sales_graph, ParallelSalesExecutor, ""),
     "loop": (build_loop_report_graph, LoopReportExecutor, ""),
     "supervisor": (

@@ -13,6 +13,7 @@ Run avec : python -m ceg.use_cases.sales_pipeline
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any, TypeVar
 
 from ceg.compiler.compiler import CEGCompiler
@@ -60,9 +61,15 @@ class SalesExecutor(MockExecutor):
             ``fetch_data`` inputs automatically.
     """
 
-    def __init__(self, csv_path: str | None = None) -> None:
+    def __init__(
+        self,
+        csv_path: str | None = None,
+        clock: Callable[[], datetime] = datetime.now,
+    ) -> None:
         super().__init__()
         self.csv_path = csv_path
+        # Date printed in the alert; inject a fixed clock for reproducible runs.
+        self.clock = clock
 
     def run(
         self,
@@ -92,7 +99,7 @@ class SalesExecutor(MockExecutor):
         elif node_id == "detect_anomaly":
             return execute_detect_anomaly(node_id, objective, inputs)
         elif node_id == "generate_alert":
-            return execute_generate_alert(node_id, objective, inputs)
+            return execute_generate_alert(node_id, objective, inputs, now=self.clock())
         else:
             raise ExecutionError(node_id=node_id, reason=f"Nœud inconnu: {node_id}")
 
