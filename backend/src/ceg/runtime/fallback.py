@@ -205,7 +205,7 @@ def apply_escalation(
     ]
     # The tier hint is what failed: escalation compares every higher tier.
     unhinted = node.model_copy(update={"model_tier_hint": None})
-    ranked = rank_models(unhinted, engine.default_constraint, higher_models, weights)
+    ranked = rank_models(unhinted, engine.constraint_for(state), higher_models, weights)
     if not ranked:
         return None
 
@@ -241,8 +241,8 @@ def apply_degradation(
     ``truncate_ratio`` of its estimated cost and latency. A real deployment
     would instead shorten the prompt or relax the requested output.
 
-    The degraded run must fit in the remaining budget: degradation never
-    spends money the engine does not have.
+    The degraded run must fit in the remaining budget and latency budget:
+    degradation never spends what the engine does not have.
 
     Returns a state-update dict on success, or ``None`` on failure (or when
     the degraded run does not fit in the budget).
@@ -256,7 +256,11 @@ def apply_degradation(
             "estimated_latency_ms": model.estimated_latency_ms * truncate_ratio,
         }
     )
-    if degraded_model.estimated_cost > engine.budget_remaining:
+    limits = engine.constraint_for(state)
+    if (
+        degraded_model.estimated_cost > limits.budget_remaining
+        or degraded_model.estimated_latency_ms > limits.max_latency_ms
+    ):
         return None
 
     truncated_objective = node.objective[

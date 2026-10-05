@@ -66,6 +66,10 @@ _CAPABILITY_RATINGS: dict[str, dict[str, float]] = {
         "trend_analysis": 0.55,
         "reasoning": 0.50,
         "notification": 0.75,
+        # Capabilities used by the loop and multi-agent demos
+        "evaluation": 0.55,
+        "web_search": 0.70,
+        "information_retrieval": 0.75,
     },
     "fast-lite": {
         "data_retrieval": 0.85,
@@ -81,6 +85,10 @@ _CAPABILITY_RATINGS: dict[str, dict[str, float]] = {
         "trend_analysis": 0.58,
         "reasoning": 0.55,
         "notification": 0.78,
+        # Capabilities used by the loop and multi-agent demos
+        "evaluation": 0.60,
+        "web_search": 0.74,
+        "information_retrieval": 0.80,
     },
     "balanced-standard": {
         "data_retrieval": 0.90,
@@ -96,6 +104,10 @@ _CAPABILITY_RATINGS: dict[str, dict[str, float]] = {
         "trend_analysis": 0.80,
         "reasoning": 0.79,
         "notification": 0.86,
+        # Capabilities used by the loop and multi-agent demos
+        "evaluation": 0.80,
+        "web_search": 0.84,
+        "information_retrieval": 0.87,
     },
     "balanced-plus": {
         "data_retrieval": 0.92,
@@ -111,6 +123,10 @@ _CAPABILITY_RATINGS: dict[str, dict[str, float]] = {
         "trend_analysis": 0.83,
         "reasoning": 0.82,
         "notification": 0.88,
+        # Capabilities used by the loop and multi-agent demos
+        "evaluation": 0.83,
+        "web_search": 0.86,
+        "information_retrieval": 0.89,
     },
     "quality-pro": {
         "data_retrieval": 0.95,
@@ -126,6 +142,10 @@ _CAPABILITY_RATINGS: dict[str, dict[str, float]] = {
         "trend_analysis": 0.93,
         "reasoning": 0.94,
         "notification": 0.96,
+        # Capabilities used by the loop and multi-agent demos
+        "evaluation": 0.94,
+        "web_search": 0.92,
+        "information_retrieval": 0.94,
     },
 }
 
@@ -222,6 +242,9 @@ _ALL_CAPABILITIES = [
     "trend_analysis",
     "reasoning",
     "notification",
+    "evaluation",
+    "web_search",
+    "information_retrieval",
 ]
 
 DEFAULT_MODEL_REGISTRY: list[ModelProfile] = [
@@ -393,6 +416,9 @@ class RuntimeDecisionEngine:
         weights: Scoring weights for ``select_model()``; defaults to
             ``SelectionWeights()``.
         fallback_config: Default fallback configuration for all nodes.
+        max_total_latency_ms: Latency budget for the whole execution: the
+            cumulated latency of the node executions never exceeds it. None
+            means no limit. Set from ``TaskConstraint.max_latency_seconds``.
     """
 
     def __init__(
@@ -402,12 +428,14 @@ class RuntimeDecisionEngine:
         available_models: list[ModelProfile] | None = None,
         weights: SelectionWeights | None = None,
         fallback_config: FallbackConfig | None = None,
+        max_total_latency_ms: float | None = None,
     ) -> None:
         self.budget_total = budget_total
         self.budget_used: float = 0.0
         # Parallel branches run in worker threads and spend concurrently.
         self._budget_lock = threading.Lock()
         self.max_latency_ms = max_latency_ms
+        self.max_total_latency_ms = max_total_latency_ms
         self.available_models: list[ModelProfile] = (
             available_models
             if available_models is not None
@@ -442,6 +470,23 @@ class RuntimeDecisionEngine:
         return Constraint(
             budget_remaining=self.budget_remaining,
             max_latency_ms=self.max_latency_ms,
+        )
+
+    def constraint_for(self, state: dict[str, Any]) -> Constraint:
+        """Constraints for the next node of the execution whose state is given.
+
+        Adds the latency budget to ``default_constraint``: a node may not
+        take longer than what remains of ``max_total_latency_ms`` once the
+        latency already accumulated in ``state`` is deducted.
+        """
+        max_latency_ms = self.max_latency_ms
+        if self.max_total_latency_ms is not None:
+            spent = float(state.get("total_latency_ms", 0.0))
+            max_latency_ms = min(
+                max_latency_ms, max(0.0, self.max_total_latency_ms - spent)
+            )
+        return Constraint(
+            budget_remaining=self.budget_remaining, max_latency_ms=max_latency_ms
         )
 
     def spend(self, amount: float) -> None:
@@ -484,11 +529,8 @@ class RuntimeDecisionEngine:
         """
         from ceg.compiler.mock_executor import ExecutionError
 
-        # ── Step 1: pre-flight budget check ──────────────────────────────
-        constraints = self.default_constraint
-        if self.budget_remaining <= 0.0:
-            # No budget at all → Degradation first, then Abort
-            return self._handle_budget_exhausted(node, executor, state)
+        # ── Step 1: constraints for this node (budget + latency left) ────
+        constraints = self.constraint_for(state)
 
         # ── Step 2: model selection ───────────────────────────────────────
         ranked = rank_models(
@@ -498,8 +540,7 @@ class RuntimeDecisionEngine:
             weights=self.weights,
         )
         if not ranked:
-            # Budget insufficient for any model → degradation path
-            return self._handle_budget_exhausted(node, executor, state)
+            return self._handle_no_eligible_model(node, executor, state)
         model, score = ranked[0]
         decision = {
             "selected_model": model.name,
@@ -555,39 +596,53 @@ class RuntimeDecisionEngine:
 
     # ── Private helpers ───────────────────────────────────────────────────────
 
-    def _handle_budget_exhausted(
+    def _handle_no_eligible_model(
         self,
         node: CEGNode,
         executor: Executor,
         state: dict[str, Any],
     ) -> dict[str, Any]:
-        """Handle the case where no model can be funded by the current budget.
+        """No model fits: refuse, or run a degraded version that still fits.
 
-        Strategy: try Degradation (cheaper truncated execution), then Abort.
+        - No model of the registry has the required capabilities: the node is
+          aborted. Running it on a model lacking a capability would silently
+          break the declaration.
+        - Capable models exist but none fits the remaining budget or latency:
+          Degradation on the cheapest capable model, then Abort.
         """
         from ceg.runtime.fallback import apply_abort, apply_degradation
 
-        # Degradation runs a cheaper, simplified version of the node on the
-        # cheapest model; ``apply_degradation`` refuses it if even that does
-        # not fit in the remaining budget.
-        if self.available_models:
-            cheapest = min(self.available_models, key=lambda m: m.estimated_cost)
-            result = apply_degradation(
-                node=node,
-                executor=executor,
-                engine=self,
-                state=state,
-                model=cheapest,
+        capable = [
+            m for m in self.available_models if m.supports(node.required_capabilities)
+        ]
+        if not capable:
+            apply_abort(
+                node,
+                reason=(
+                    "No available model has the required capabilities "
+                    f"{node.required_capabilities}."
+                ),
             )
-            if result is not None:
-                result["execution_log"][0]["fallbacks_triggered"] = [
-                    FallbackPolicy.DEGRADATION.value
-                ]
-                return result
+
+        cheapest = min(capable, key=lambda m: m.estimated_cost)
+        result = apply_degradation(
+            node=node,
+            executor=executor,
+            engine=self,
+            state=state,
+            model=cheapest,
+        )
+        if result is not None:
+            result["execution_log"][0]["fallbacks_triggered"] = [
+                FallbackPolicy.DEGRADATION.value
+            ]
+            return result
 
         apply_abort(
             node,
-            reason="Budget exhausted — no eligible model after degradation.",
+            reason=(
+                "Budget or latency budget exhausted — no model fits, even degraded."
+            ),
             fallbacks_triggered=[FallbackPolicy.DEGRADATION.value],
         )
         # unreachable, but satisfies type checker
