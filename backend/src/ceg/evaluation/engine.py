@@ -19,8 +19,8 @@ Usage pattern:
 
 from __future__ import annotations
 
-import math
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from ceg.evaluation.judge import JudgeClient, MockJudgeClient
 from ceg.evaluation.models import (
@@ -30,7 +30,6 @@ from ceg.evaluation.models import (
     NodeEvaluation,
     RobustnessReport,
 )
-
 
 # ── Default composite score weights ──────────────────────────────────────────
 
@@ -54,7 +53,7 @@ class EvaluationEngine:
     Args:
         judge: A JudgeClient implementation. Defaults to ``MockJudgeClient()``.
         criteria: List of Criterion objects used for quality evaluation.
-            Defaults to an empty list (quality_score = 0.0 if none provided).
+            Defaults to an empty list (quality is then not measured).
         weights: Composite score weights dict with keys wc, wl, wq, wr.
             Must sum to 1.0. Defaults to 0.25 each.
         quality_node_ids: Node IDs to evaluate with the judge. If None,
@@ -107,11 +106,13 @@ class EvaluationEngine:
         self,
         workflow_state: dict[str, Any],
         criteria: list[Criterion] | None = None,
-    ) -> tuple[float, list[JudgeVerdict]]:
+    ) -> tuple[float | None, list[JudgeVerdict]]:
         """Run the LLM judge on completed node outputs and return quality score.
 
         Evaluates all nodes whose status == "completed" (or those listed in
-        ``self.quality_node_ids`` if set). Skipped nodes are excluded.
+        ``self.quality_node_ids`` if set). Skipped nodes are excluded. Each
+        node is judged only on the criteria that apply to it
+        (``Criterion.target_node_ids``); a node with none is not judged.
         The aggregate quality score is the mean of per-node aggregate scores.
 
         Args:
@@ -119,8 +120,8 @@ class EvaluationEngine:
             criteria: Override criteria list (uses ``self.criteria`` if None).
 
         Returns:
-            Tuple of (aggregate_quality_score: float [0,1],
-                      verdicts: list[JudgeVerdict])
+            Tuple of (aggregate_quality_score: float [0,1], or None when no
+                      node was judged, verdicts: list[JudgeVerdict])
         """
         active_criteria = criteria if criteria is not None else self.criteria
 
@@ -139,33 +140,33 @@ class EvaluationEngine:
         # Determine which nodes to judge
         if self.quality_node_ids is not None:
             candidate_ids = [
-                nid for nid in self.quality_node_ids
+                nid
+                for nid in self.quality_node_ids
                 if node_statuses.get(nid) == "completed"
             ]
         else:
             candidate_ids = [
-                nid for nid, status in node_statuses.items()
-                if status == "completed"
+                nid for nid, status in node_statuses.items() if status == "completed"
             ]
-
-        if not candidate_ids or not active_criteria:
-            return 0.0, []
 
         verdicts: list[JudgeVerdict] = []
         for node_id in candidate_ids:
+            node_criteria = [c for c in active_criteria if c.applies_to(node_id)]
+            if not node_criteria:
+                continue
             output = node_outputs.get(node_id)
             if not isinstance(output, dict):
                 output = {}
             verdict = self.judge.evaluate(
                 node_id=node_id,
                 node_output=output,
-                criteria=active_criteria,
+                criteria=node_criteria,
                 node_objective=objective_map.get(node_id, ""),
             )
             verdicts.append(verdict)
 
         if not verdicts:
-            return 0.0, []
+            return None, []
 
         avg_quality = sum(v.aggregate_quality_score for v in verdicts) / len(verdicts)
         return round(min(1.0, avg_quality), 6), verdicts
@@ -176,18 +177,24 @@ class EvaluationEngine:
         executor_factory: Callable[[], Any],
         scenario_name: str = "unnamed",
         n_runs: int = 20,
+        inputs: dict[str, Any] | None = None,
     ) -> RobustnessReport:
         """Execute the pipeline N times and measure success rate.
 
         A run is counted as successful if ``workflow.invoke()`` returns without
         raising an exception. NodeAbortError and any other exception count as
-        failure.
+        failure. Runs are unattended: HITL nodes execute without approval.
+
+        With a deterministic executor every run gives the same outcome, so the
+        success rate is 0 or 1; it only becomes informative with executors
+        whose failures vary from run to run (real LLM calls, injected faults).
 
         Args:
             build_fn: Callable that returns a CEGGraph (called once per run).
             executor_factory: Callable that returns a fresh executor each run.
             scenario_name: Label for the report.
             n_runs: Number of runs (default 20; use smaller value in tests).
+            inputs: Graph inputs passed to every run (e.g. ``csv_path``).
 
         Returns:
             RobustnessReport with success_rate, failure_reasons, mean metrics.
@@ -206,8 +213,8 @@ class EvaluationEngine:
                 graph = build_fn()
                 executor = executor_factory()
                 compiler = CEGCompiler(executor=executor)
-                workflow = compiler.compile(graph)
-                state = workflow.invoke()
+                workflow = compiler.compile(graph, ignore_interrupts=True)
+                state = workflow.invoke({"inputs": dict(inputs or {})})
                 n_success += 1
                 costs.append(float(state.get("total_cost", 0.0)))
                 latencies.append(float(state.get("total_latency_ms", 0.0)))
@@ -251,8 +258,8 @@ class EvaluationEngine:
         self,
         cost_usd: float,
         latency_seconds: float,
-        quality_score: float,
-        robustness_score: float,
+        quality_score: float | None,
+        robustness_score: float | None,
         max_budget_usd: float = 0.50,
         max_latency_seconds: float = 15.0,
         weights: dict[str, float] | None = None,
@@ -266,13 +273,16 @@ class EvaluationEngine:
                   + wr*robustness_score
 
         Each term is clipped to [0, 1] before weighting to prevent negative
-        contributions from budget/latency overruns.
+        contributions from budget/latency overruns. A ``None`` quality or
+        robustness means "not measured": that term is left out and the
+        remaining weights are rescaled to sum to 1, instead of inventing a
+        value for it.
 
         Args:
             cost_usd: Measured cost in USD.
             latency_seconds: Measured latency in seconds.
-            quality_score: Aggregate quality score from judge [0, 1].
-            robustness_score: Success rate over N runs [0, 1].
+            quality_score: Aggregate quality score from judge [0, 1], or None.
+            robustness_score: Success rate over N runs [0, 1], or None.
             max_budget_usd: Budget ceiling (denominator for cost term).
             max_latency_seconds: Latency ceiling (denominator for latency term).
             weights: Override weights dict (uses ``self.weights`` if None).
@@ -286,18 +296,20 @@ class EvaluationEngine:
         wq = w.get("wq", 0.25)
         wr = w.get("wr", 0.25)
 
-        # Individual terms — clipped to [0, 1]
-        cost_term = _clip(1.0 - cost_usd / max_budget_usd)
-        latency_term = _clip(1.0 - latency_seconds / max_latency_seconds)
-        quality_term = _clip(quality_score)
-        robustness_term = _clip(robustness_score)
+        # (weight, term) pairs — terms clipped to [0, 1]
+        terms: list[tuple[float, float]] = [
+            (wc, _clip(1.0 - cost_usd / max_budget_usd)),
+            (wl, _clip(1.0 - latency_seconds / max_latency_seconds)),
+        ]
+        if quality_score is not None:
+            terms.append((wq, _clip(quality_score)))
+        if robustness_score is not None:
+            terms.append((wr, _clip(robustness_score)))
 
-        composite = (
-            wc * cost_term
-            + wl * latency_term
-            + wq * quality_term
-            + wr * robustness_term
-        )
+        total_weight = sum(weight for weight, _ in terms)
+        if total_weight == 0.0:
+            return 0.0
+        composite = sum(weight * term for weight, term in terms) / total_weight
         return round(_clip(composite), 6)
 
     def evaluate(
@@ -306,7 +318,7 @@ class EvaluationEngine:
         scenario_name: str = "unnamed",
         max_budget_usd: float = 0.50,
         max_latency_seconds: float = 15.0,
-        robustness_score: float = 1.0,
+        robustness_score: float | None = None,
         criteria: list[Criterion] | None = None,
     ) -> EvaluationReport:
         """Full evaluation pipeline — cost + latency + quality + composite.
@@ -319,8 +331,9 @@ class EvaluationEngine:
             scenario_name: Human-readable label for the scenario.
             max_budget_usd: Budget ceiling for composite score.
             max_latency_seconds: Latency ceiling for composite score.
-            robustness_score: Pre-computed robustness score [0, 1].
-                Defaults to 1.0 (assume 100% success for single-run eval).
+            robustness_score: Pre-computed robustness score [0, 1], from
+                ``measure_robustness()``. Defaults to None: a single run says
+                nothing about robustness, so it is reported as unmeasured.
             criteria: Override criteria list.
 
         Returns:
@@ -376,7 +389,18 @@ class EvaluationEngine:
             weights=dict(self.weights),
             max_budget_usd=max_budget_usd,
             max_latency_seconds=max_latency_seconds,
-            metadata={"scenario": scenario_name},
+            metadata={
+                "scenario": scenario_name,
+                "judge": type(self.judge).__name__,
+                "unmeasured": [
+                    name
+                    for name, value in (
+                        ("quality", quality_score),
+                        ("robustness", robustness_score),
+                    )
+                    if value is None
+                ],
+            },
         )
 
     # ── Private helpers ───────────────────────────────────────────────────────

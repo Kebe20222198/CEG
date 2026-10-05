@@ -30,12 +30,19 @@ class Criterion(BaseModel):
         evaluation_prompt_template: Prompt template sent to the LLM judge.
             Use ``{output}`` as placeholder for the node output under evaluation
             and ``{objective}`` for the node's objective string.
+        target_node_ids: Nodes this criterion applies to. Empty means every
+            completed node.
     """
 
     name: str = Field(..., min_length=1)
     description: str = Field(..., min_length=1)
     weight: float = Field(..., gt=0.0, le=1.0)
     evaluation_prompt_template: str = Field(..., min_length=1)
+    target_node_ids: list[str] = Field(default_factory=list)
+
+    def applies_to(self, node_id: str) -> bool:
+        """Return True if this criterion evaluates ``node_id``."""
+        return not self.target_node_ids or node_id in self.target_node_ids
 
 
 class CriterionScore(BaseModel):
@@ -61,7 +68,8 @@ class JudgeVerdict(BaseModel):
         node_id: The node whose output was judged.
         criteria_scores: One CriterionScore per evaluated Criterion.
         aggregate_quality_score: Weighted average of all criteria scores.
-            Computed automatically if not provided.
+            Computed (as the plain mean of the criteria scores) when not
+            given; an explicit value, including 0.0, is kept as is.
         raw_judge_response: Optional raw string returned by the LLM judge
             (useful for debugging; None for mock verdicts).
     """
@@ -72,12 +80,15 @@ class JudgeVerdict(BaseModel):
     raw_judge_response: str | None = Field(default=None)
 
     @model_validator(mode="after")
-    def _compute_aggregate(self) -> "JudgeVerdict":
-        """Auto-compute aggregate_quality_score from weighted criteria if not set."""
-        if self.criteria_scores and self.aggregate_quality_score == 0.0:
-            total_weight = sum(cs.score for cs in self.criteria_scores)
-            # Simple mean when weights not available at verdict level
-            self.aggregate_quality_score = total_weight / len(self.criteria_scores)
+    def _compute_aggregate(self) -> JudgeVerdict:
+        """Compute aggregate_quality_score from the criteria when not given."""
+        if (
+            self.criteria_scores
+            and "aggregate_quality_score" not in self.model_fields_set
+        ):
+            # Weights are not available at verdict level: plain mean.
+            score_sum = sum(cs.score for cs in self.criteria_scores)
+            self.aggregate_quality_score = score_sum / len(self.criteria_scores)
         return self
 
 
@@ -113,12 +124,15 @@ class EvaluationReport(BaseModel):
         total_cost_usd: Sum of all node costs.
         total_latency_ms: Sum of all node latencies.
         total_latency_seconds: ``total_latency_ms / 1000``.
-        quality_score: Weighted aggregate quality from the LLM judge [0, 1].
-        robustness_score: Fraction of successful runs [0, 1] (from N-run test
-            or set to 1.0 for single-run evaluations).
+        quality_score: Weighted aggregate quality from the LLM judge [0, 1],
+            or None when no node output was judged.
+        robustness_score: Fraction of successful runs [0, 1] from an N-run
+            measurement, or None when robustness was not measured.
         composite_score: Final composite score computed by the formula:
             wc*(1 - cost/max_budget) + wl*(1 - latency/max_latency)
             + wq*quality + wr*robustness
+            Unmeasured dimensions are left out and the remaining weights are
+            rescaled to sum to 1 (see ``metadata["unmeasured"]``).
         weights: Dict with keys wc, wl, wq, wr used for composite score.
         max_budget_usd: Budget ceiling used in composite score computation.
         max_latency_seconds: Latency ceiling used in composite score computation.
@@ -130,8 +144,8 @@ class EvaluationReport(BaseModel):
     total_cost_usd: float = Field(default=0.0, ge=0.0)
     total_latency_ms: float = Field(default=0.0, ge=0.0)
     total_latency_seconds: float = Field(default=0.0, ge=0.0)
-    quality_score: float = Field(default=0.0, ge=0.0, le=1.0)
-    robustness_score: float = Field(default=1.0, ge=0.0, le=1.0)
+    quality_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    robustness_score: float | None = Field(default=None, ge=0.0, le=1.0)
     composite_score: float = Field(default=0.0, ge=0.0, le=1.0)
     weights: dict[str, float] = Field(
         default_factory=lambda: {"wc": 0.25, "wl": 0.25, "wq": 0.25, "wr": 0.25}

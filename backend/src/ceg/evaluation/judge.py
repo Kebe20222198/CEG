@@ -21,7 +21,6 @@ from typing import Any, Protocol, runtime_checkable
 
 from ceg.evaluation.models import Criterion, CriterionScore, JudgeVerdict
 
-
 # ── Protocol ──────────────────────────────────────────────────────────────────
 
 
@@ -102,6 +101,9 @@ class MockJudgeClient:
 
         Each Criterion receives a score from ``_score_criterion()``, a
         synthetic justification, and a ``passed`` flag based on the threshold.
+        The score does not depend on the output content: this mock exercises
+        the evaluation pipeline, it does not assess quality. Plug a real
+        JudgeClient (LLM call) to measure quality.
 
         The ``aggregate_quality_score`` is the weighted average of all
         criterion scores (using each Criterion's ``weight`` field).

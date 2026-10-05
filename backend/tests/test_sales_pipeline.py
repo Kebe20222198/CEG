@@ -7,19 +7,19 @@
   D. Données corrompues — CSV malformé → fallback déclenché sur fetch_data
 """
 
-import os
-import pytest
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 from ceg.compiler.compiler import CEGCompiler
-from ceg.compiler.mock_executor import ExecutionError
 from ceg.runtime.fallback import NodeAbortError
 from ceg.use_cases.sales_pipeline import SalesExecutor, build_sales_graph
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
-def _run_pipeline(csv_filename: str) -> dict:
+def _run_pipeline(csv_filename: str) -> dict[str, Any]:
     """Helper: build + compile + invoke the pipeline on a given CSV fixture."""
     csv_path = str(FIXTURES_DIR / csv_filename)
     graph = build_sales_graph()
@@ -60,9 +60,7 @@ class TestScenarioANormal:
     def test_generate_alert_absent_from_execution_log_as_completed(self):
         result = _run_pipeline("scenario_a_normal.csv")
         completed_nodes = [
-            e["node_id"]
-            for e in result["execution_log"]
-            if e["status"] == "completed"
+            e["node_id"] for e in result["execution_log"] if e["status"] == "completed"
         ]
         assert "generate_alert" not in completed_nodes
 
@@ -93,7 +91,9 @@ class TestScenarioBSingleAnomaly:
     def test_nord_variation_around_minus_26(self):
         result = _run_pipeline("scenario_b_single_anomaly.csv")
         detect_output = result["node_outputs"]["detect_anomaly"]
-        nord_anomaly = next(a for a in detect_output["anomalies"] if a["region"] == "Nord")
+        nord_anomaly = next(
+            a for a in detect_output["anomalies"] if a["region"] == "Nord"
+        )
         # Allow ±1% tolerance
         assert nord_anomaly["variation_pct"] < -20.0
         assert nord_anomaly["variation_pct"] > -35.0
@@ -189,10 +189,10 @@ class TestScenarioDCorruptedData:
         assert len(exc_info.value.reason) > 0
 
     def test_fallback_triggered_not_plain_execution_error(self):
-        """The error that surfaces must be NodeAbortError (fallback chain ran), not raw ExecutionError."""
+        """The surfaced error is NodeAbortError (fallbacks ran), not ExecutionError."""
         with pytest.raises(NodeAbortError):
             _run_pipeline("scenario_d_corrupted.csv")
-        # If this passes, it means FallbackOrchestrator was triggered (not raw ExecutionError)
+        # Passing means the FallbackOrchestrator ran (not a raw ExecutionError)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -206,13 +206,19 @@ class TestConditionalEdge:
     def test_compiler_accepts_conditional_edge(self):
         from ceg.models.graph import CEGEdge, CEGGraph, EdgeType
         from ceg.models.node import CEGNode
+
         graph = CEGGraph(
             nodes=[
                 CEGNode(id="A", objective="step A"),
                 CEGNode(id="B", objective="step B"),
             ],
             edges=[
-                CEGEdge(source="A", target="B", edge_type=EdgeType.CONDITIONAL, condition="some_flag"),
+                CEGEdge(
+                    source="A",
+                    target="B",
+                    edge_type=EdgeType.CONDITIONAL,
+                    condition="some_flag",
+                ),
             ],
         )
         compiler = CEGCompiler()
@@ -224,15 +230,22 @@ class TestConditionalEdge:
         """When condition key is absent/False in source output, target is skipped."""
         from ceg.models.graph import CEGEdge, CEGGraph, EdgeType
         from ceg.models.node import CEGNode
-        from ceg.compiler.mock_executor import MockExecutor
 
         # Custom executor: A returns output WITHOUT "go_b" key set to True
         class ConditionalExecutor:
-            def execute(self, node_id, objective, inputs, attempt=1):
+            def execute(self, node_id, objective, inputs, attempt=1, model=None):
                 from ceg.compiler.mock_executor import ExecutionResult
+
                 if node_id == "A":
-                    return ExecutionResult(output={"go_b": False}, cost=0.001, latency_ms=10.0, confidence=0.9)
-                return ExecutionResult(output={"done": True}, cost=0.001, latency_ms=10.0, confidence=0.9)
+                    return ExecutionResult(
+                        output={"go_b": False},
+                        cost=0.001,
+                        latency_ms=10.0,
+                        confidence=0.9,
+                    )
+                return ExecutionResult(
+                    output={"done": True}, cost=0.001, latency_ms=10.0, confidence=0.9
+                )
 
         graph = CEGGraph(
             nodes=[
@@ -240,7 +253,12 @@ class TestConditionalEdge:
                 CEGNode(id="B", objective="step B"),
             ],
             edges=[
-                CEGEdge(source="A", target="B", edge_type=EdgeType.CONDITIONAL, condition="go_b"),
+                CEGEdge(
+                    source="A",
+                    target="B",
+                    edge_type=EdgeType.CONDITIONAL,
+                    condition="go_b",
+                ),
             ],
         )
         compiler = CEGCompiler(executor=ConditionalExecutor())
@@ -255,11 +273,19 @@ class TestConditionalEdge:
         from ceg.models.node import CEGNode
 
         class ConditionalExecutor:
-            def execute(self, node_id, objective, inputs, attempt=1):
+            def execute(self, node_id, objective, inputs, attempt=1, model=None):
                 from ceg.compiler.mock_executor import ExecutionResult
+
                 if node_id == "A":
-                    return ExecutionResult(output={"go_b": True}, cost=0.001, latency_ms=10.0, confidence=0.9)
-                return ExecutionResult(output={"done": True}, cost=0.001, latency_ms=10.0, confidence=0.9)
+                    return ExecutionResult(
+                        output={"go_b": True},
+                        cost=0.001,
+                        latency_ms=10.0,
+                        confidence=0.9,
+                    )
+                return ExecutionResult(
+                    output={"done": True}, cost=0.001, latency_ms=10.0, confidence=0.9
+                )
 
         graph = CEGGraph(
             nodes=[
@@ -267,7 +293,12 @@ class TestConditionalEdge:
                 CEGNode(id="B", objective="step B"),
             ],
             edges=[
-                CEGEdge(source="A", target="B", edge_type=EdgeType.CONDITIONAL, condition="go_b"),
+                CEGEdge(
+                    source="A",
+                    target="B",
+                    edge_type=EdgeType.CONDITIONAL,
+                    condition="go_b",
+                ),
             ],
         )
         compiler = CEGCompiler(executor=ConditionalExecutor())

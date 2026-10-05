@@ -141,7 +141,7 @@ class CEGGraph(BaseModel):
             adj[edge.source].add(edge.target)
 
         # Compute in-degrees
-        for src, neighbors in adj.items():
+        for neighbors in adj.values():
             for dst in neighbors:
                 in_degree[dst] += 1
 
@@ -160,12 +160,19 @@ class CEGGraph(BaseModel):
                     queue.append(neighbor)
 
         if visited_count != len(node_ids):
+            cycle_nodes = sorted(nid for nid, deg in in_degree.items() if deg > 0)
             raise ValueError(
-                "Graph contains at least one cycle. CEGGraph must be a valid DAG "
+                f"Graph contains a cycle involving nodes {cycle_nodes}. "
+                "CEGGraph must be a valid DAG "
                 "(use EdgeType.LOOP for intentional cycles)."
             )
 
         return self
+
+
+# CEGNode.subgraph refers to CEGGraph, which is only defined now.
+CEGNode.model_rebuild(_types_namespace={"CEGGraph": CEGGraph})
+CEGGraph.model_rebuild()
 
 
 # Alias for the compiler interface

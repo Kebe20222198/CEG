@@ -16,8 +16,8 @@ from ceg.models.graph import CEGEdge, CEGGraph, EdgeType
 from ceg.models.node import CEGNode, ModelTierHint
 from ceg.models.task import CognitiveTask
 
-
 # ── Subgraph 1: Research Team ────────────────────────────────────────────────
+
 
 def build_research_team_subgraph() -> CEGGraph:
     """Build the inner Research Team subgraph with parallel sources.
@@ -60,16 +60,33 @@ def build_research_team_subgraph() -> CEGGraph:
     ]
 
     edges = [
-        CEGEdge(source="research_init", target="web_search_agent", edge_type=EdgeType.PARALLEL),
-        CEGEdge(source="research_init", target="db_extractor_agent", edge_type=EdgeType.PARALLEL),
-        CEGEdge(source="web_search_agent", target="merge_research", edge_type=EdgeType.SEQUENTIAL),
-        CEGEdge(source="db_extractor_agent", target="merge_research", edge_type=EdgeType.SEQUENTIAL),
+        CEGEdge(
+            source="research_init",
+            target="web_search_agent",
+            edge_type=EdgeType.PARALLEL,
+        ),
+        CEGEdge(
+            source="research_init",
+            target="db_extractor_agent",
+            edge_type=EdgeType.PARALLEL,
+        ),
+        CEGEdge(
+            source="web_search_agent",
+            target="merge_research",
+            edge_type=EdgeType.SEQUENTIAL,
+        ),
+        CEGEdge(
+            source="db_extractor_agent",
+            target="merge_research",
+            edge_type=EdgeType.SEQUENTIAL,
+        ),
     ]
 
     return CEGGraph(nodes=nodes, edges=edges)
 
 
 # ── Subgraph 2: Analytics & Quality Team ─────────────────────────────────────
+
 
 def build_analytics_team_subgraph() -> CEGGraph:
     """Build the inner Analytics Team subgraph with self-critique loop.
@@ -105,7 +122,11 @@ def build_analytics_team_subgraph() -> CEGGraph:
     ]
 
     edges = [
-        CEGEdge(source="model_analysis", target="quality_audit", edge_type=EdgeType.SEQUENTIAL),
+        CEGEdge(
+            source="model_analysis",
+            target="quality_audit",
+            edge_type=EdgeType.SEQUENTIAL,
+        ),
         CEGEdge(
             source="quality_audit",
             target="model_analysis",
@@ -126,6 +147,7 @@ def build_analytics_team_subgraph() -> CEGGraph:
 
 # ── Top-Level Hierarchical Multi-Agent Graph ─────────────────────────────────
 
+
 def build_hierarchical_supervisor_graph() -> CEGGraph:
     """Build the top-level supervisor graph with 2 team subgraphs.
 
@@ -145,15 +167,21 @@ def build_hierarchical_supervisor_graph() -> CEGGraph:
     nodes = [
         CEGNode(
             id="supervisor_dispatch",
-            objective="Superviser l'analyse globale et déléguer aux équipes spécialisées",
-            task=CognitiveTask(objective="Planification stratégique et orchestration hiérarchique"),
+            objective=(
+                "Superviser l'analyse globale et déléguer aux équipes spécialisées"
+            ),
+            task=CognitiveTask(
+                objective="Planification stratégique et orchestration hiérarchique"
+            ),
             model_tier_hint=ModelTierHint.QUALITY,
         ),
         CEGNode(
             id="research_team",
             objective="Équipe Recherche : Collecte multi-sources et veille",
             dependencies=["supervisor_dispatch"],
-            task=CognitiveTask(objective="Exécution du sous-graphe de recherche documentaire"),
+            task=CognitiveTask(
+                objective="Exécution du sous-graphe de recherche documentaire"
+            ),
             subgraph=research_sub,
             model_tier_hint=ModelTierHint.BALANCED,
         ),
@@ -161,7 +189,9 @@ def build_hierarchical_supervisor_graph() -> CEGGraph:
             id="analytics_team",
             objective="Équipe Analyse & Risques : Modélisation et audit itératif",
             dependencies=["research_team"],
-            task=CognitiveTask(objective="Exécution du sous-graphe d'analyse prédictive"),
+            task=CognitiveTask(
+                objective="Exécution du sous-graphe d'analyse prédictive"
+            ),
             subgraph=analytics_sub,
             model_tier_hint=ModelTierHint.QUALITY,
         ),
@@ -197,6 +227,7 @@ def build_hierarchical_supervisor_graph() -> CEGGraph:
 
 # ── Hierarchical Supervisor Executor ─────────────────────────────────────────
 
+
 class HierarchicalSupervisorExecutor(MockExecutor):
     """Executor handling nodes across top-level graph and nested subgraphs."""
 
@@ -204,7 +235,7 @@ class HierarchicalSupervisorExecutor(MockExecutor):
         super().__init__()
         self._analysis_iter = 0
 
-    def execute(
+    def run(
         self,
         node_id: str,
         objective: str,
@@ -215,7 +246,10 @@ class HierarchicalSupervisorExecutor(MockExecutor):
         if node_id == "supervisor_dispatch":
             return ExecutionResult(
                 output={
-                    "plan": "Plan d'orchestration hiérarchique déployé : Recherche -> Analyse -> Synthèse",
+                    "plan": (
+                        "Plan d'orchestration hiérarchique déployé : "
+                        "Recherche -> Analyse -> Synthèse"
+                    ),
                     "delegated_teams": ["research_team", "analytics_team"],
                     "priority": "HIGH",
                 },
@@ -269,7 +303,9 @@ class HierarchicalSupervisorExecutor(MockExecutor):
         elif node_id == "merge_research":
             return ExecutionResult(
                 output={
-                    "consolidated_dossier": "Dossier de recherche consolidé (Web + Données internes).",
+                    "consolidated_dossier": (
+                        "Dossier de recherche consolidé (Web + Données internes)."
+                    ),
                     "total_sources": 2,
                 },
                 cost=0.0015,
@@ -305,7 +341,10 @@ class HierarchicalSupervisorExecutor(MockExecutor):
         elif node_id == "formatted_insights":
             return ExecutionResult(
                 output={
-                    "insights": ["ROI projeté à 2.8x", "Risque de volatilité maîtrisé à < 5%"],
+                    "insights": [
+                        "ROI projeté à 2.8x",
+                        "Risque de volatilité maîtrisé à < 5%",
+                    ],
                     "status": "ready_for_executive",
                 },
                 cost=0.001,

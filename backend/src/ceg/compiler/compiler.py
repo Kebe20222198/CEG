@@ -1,7 +1,7 @@
 """CEGCompiler — translates a CEG abstract graph into an executable LangGraph workflow.
 
 This module implements the core compilation pipeline:
-  validate → topological_sort → translate → inject_runtime → CompiledWorkflow
+  validate → topological_sort → inject_runtime → CompiledWorkflow
 
 Supported control-flow mechanisms:
   - SEQUENTIAL: standard linear edge (add_edge)
@@ -12,6 +12,8 @@ Supported control-flow mechanisms:
     add_conditional_edges that redirects to an earlier node in the graph.
   - HITL: interrupt_before / interrupt_after on nodes — uses LangGraph's
     interrupt() for human-in-the-loop approval with checkpointer persistence.
+    Compiling a graph with HITL nodes and no checkpointer is an error, so an
+    approval step can never be bypassed by accident.
 """
 
 from __future__ import annotations
@@ -22,12 +24,11 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
-from ceg.compiler.mock_executor import MockExecutor
+from ceg.compiler.mock_executor import Executor, MockExecutor
 from ceg.compiler.state import CEGState
-from ceg.models.graph import CEGGraph, EdgeType
+from ceg.models.graph import CognitiveExecutionGraph, EdgeType
 from ceg.models.node import CEGNode
 from ceg.runtime.decision_engine import RuntimeDecisionEngine
-from ceg.runtime.fallback import NodeAbortError
 
 
 class CompiledWorkflow:
@@ -40,6 +41,8 @@ class CompiledWorkflow:
         runnable: The compiled LangGraph runnable.
         metadata: Compilation metadata (node count, edge count, etc.).
         has_checkpointer: Whether a checkpointer was provided at compile time.
+        engine: The RuntimeDecisionEngine wired into the nodes. Its budget is
+            reset at the start of every ``invoke()``.
     """
 
     def __init__(
@@ -47,10 +50,12 @@ class CompiledWorkflow:
         runnable: Any,
         metadata: dict[str, Any] | None = None,
         has_checkpointer: bool = False,
+        engine: RuntimeDecisionEngine | None = None,
     ) -> None:
         self._runnable = runnable
         self.metadata: dict[str, Any] = metadata or {}
         self._has_checkpointer = has_checkpointer
+        self._engine = engine
 
     def invoke(
         self,
@@ -62,14 +67,56 @@ class CompiledWorkflow:
 
         Args:
             initial_state: Optional overrides merged into the default CEGState.
-            thread_id: Optional thread ID for checkpointed execution (HITL).
-                Required when the workflow contains interrupt nodes.
+                Graph inputs go under the ``"inputs"`` key, e.g.
+                ``{"inputs": {"csv_path": "data.csv"}}``; executors receive
+                them merged with the upstream node outputs.
+            thread_id: Thread ID for checkpointed execution (HITL). Required
+                when the workflow was compiled with a checkpointer.
+
+        The engine's budget is reset: each invocation is a new execution.
 
         Returns:
             Final state dict after all nodes have executed (or after an
             interruption if HITL nodes are present).
+
+        Raises:
+            ValueError: If the workflow has a checkpointer and no
+                ``thread_id`` is given.
         """
+        if self._has_checkpointer and not thread_id:
+            raise ValueError(
+                "This workflow was compiled with a checkpointer: pass a "
+                "thread_id to invoke() so that it can be resumed."
+            )
+        if self._engine is not None:
+            self._engine.reset_budget()
+
+        config: dict[str, Any] | None = None
+        if self._has_checkpointer:
+            config = {"configurable": {"thread_id": thread_id}}
+
+        result: dict[str, Any] = self._runnable.invoke(
+            self._initial_state(initial_state), config=config
+        )
+        return result
+
+    def _invoke_nested(self, initial_state: dict[str, Any]) -> dict[str, Any]:
+        """Run as a subgraph from inside a parent node.
+
+        LangGraph hands the parent's run configuration (thread, checkpoint
+        namespace) to graphs invoked inside a node, so no thread_id is passed
+        and the budget is the parent's, not reset.
+        """
+        result: dict[str, Any] = self._runnable.invoke(
+            self._initial_state(initial_state)
+        )
+        return result
+
+    @staticmethod
+    def _initial_state(overrides: dict[str, Any] | None) -> dict[str, Any]:
+        """Default CEGState values, updated with ``overrides``."""
         default_state: dict[str, Any] = {
+            "inputs": {},
             "node_outputs": {},
             "node_statuses": {},
             "total_cost": 0.0,
@@ -78,15 +125,9 @@ class CompiledWorkflow:
             "loop_counts": {},
             "human_approvals": {},
         }
-        if initial_state:
-            default_state.update(initial_state)
-
-        config: dict[str, Any] | None = None
-        if thread_id and self._has_checkpointer:
-            config = {"configurable": {"thread_id": thread_id}}
-
-        result: dict[str, Any] = self._runnable.invoke(default_state, config=config)
-        return result
+        if overrides:
+            default_state.update(overrides)
+        return default_state
 
     def resume(
         self,
@@ -135,12 +176,6 @@ class CompiledWorkflow:
         return self._runnable.get_state(config)
 
 
-# ──────────────────────────────────────────────────────────────────────
-# CognitiveExecutionGraph type alias (re-export for convenience)
-# ──────────────────────────────────────────────────────────────────────
-CognitiveExecutionGraph = CEGGraph
-
-
 class CEGCompiler:
     """Compiles a CognitiveExecutionGraph into an executable LangGraph workflow.
 
@@ -160,14 +195,15 @@ class CEGCompiler:
         runtime_target: Target runtime backend (only ``"langgraph"`` supported).
         engine: Optional pre-configured RuntimeDecisionEngine. If ``None``, a
             default engine is created at compile time with sensible defaults.
-        executor: Optional MockExecutor (useful for testing with forced failures).
+        executor: Optional Executor; defaults to a MockExecutor (useful for testing
+            with forced failures).
     """
 
     def __init__(
         self,
         runtime_target: str = "langgraph",
         engine: RuntimeDecisionEngine | None = None,
-        executor: MockExecutor | None = None,
+        executor: Executor | None = None,
     ) -> None:
         if runtime_target != "langgraph":
             raise ValueError(
@@ -176,7 +212,7 @@ class CEGCompiler:
             )
         self.runtime_target = runtime_target
         self._engine = engine
-        self._executor = executor or MockExecutor()
+        self._executor: Executor = executor or MockExecutor()
 
     # ── public API ────────────────────────────────────────────────────
 
@@ -185,34 +221,49 @@ class CEGCompiler:
         ceg: CognitiveExecutionGraph,
         *,
         checkpointer: Any | None = None,
+        ignore_interrupts: bool = False,
     ) -> CompiledWorkflow:
         """Compile a CEG into an executable workflow.
 
         Args:
             ceg: A validated CognitiveExecutionGraph (CEGGraph) instance.
-            checkpointer: Optional LangGraph checkpointer (e.g. MemorySaver)
-                for HITL interrupt/resume support. If None and the graph has
-                interrupt nodes, interrupts are silently skipped.
+            checkpointer: LangGraph checkpointer (e.g. MemorySaver) for HITL
+                interrupt/resume support. Required when the graph (or one of
+                its subgraphs) has interrupt nodes.
+            ignore_interrupts: Explicit opt-out for unattended runs such as
+                benchmarks: compile a graph with interrupt nodes without a
+                checkpointer, and run those nodes without asking anyone.
 
         Returns:
             A CompiledWorkflow ready to be invoked.
+
+        Raises:
+            ValueError: If the graph is invalid, or has interrupt nodes while
+                no checkpointer is given and ``ignore_interrupts`` is False.
         """
         self._validate(ceg)
+        hitl_nodes = self._hitl_node_ids(ceg)
+        if hitl_nodes and checkpointer is None and not ignore_interrupts:
+            raise ValueError(
+                f"Nodes {hitl_nodes} require human approval "
+                "(interrupt_before/interrupt_after) but no checkpointer was "
+                "given. Pass checkpointer=MemorySaver() (or another LangGraph "
+                "checkpointer), or ignore_interrupts=True to run them unattended."
+            )
+        engine = self._engine or RuntimeDecisionEngine()
         execution_order = self._topological_sort(ceg)
-        workflow = self._inject_runtime(ceg, execution_order, checkpointer=checkpointer)
+        workflow = self._inject_runtime(
+            ceg, execution_order, engine=engine, checkpointer=checkpointer
+        )
 
         metadata: dict[str, Any] = {
             "node_count": len(ceg.nodes),
             "edge_count": len(ceg.edges),
             "execution_order": execution_order,
             "runtime_target": self.runtime_target,
-            "has_parallel": any(
-                e.edge_type == EdgeType.PARALLEL for e in ceg.edges
-            ),
+            "has_parallel": any(e.edge_type == EdgeType.PARALLEL for e in ceg.edges),
             "has_loops": any(e.edge_type == EdgeType.LOOP for e in ceg.edges),
-            "has_hitl": any(
-                n.interrupt_before or n.interrupt_after for n in ceg.nodes
-            ),
+            "has_hitl": any(n.interrupt_before or n.interrupt_after for n in ceg.nodes),
             "has_subgraphs": any(n.is_subgraph for n in ceg.nodes),
         }
 
@@ -224,9 +275,21 @@ class CEGCompiler:
             workflow.compile(**compile_kwargs),
             metadata=metadata,
             has_checkpointer=checkpointer is not None,
+            engine=engine,
         )
 
     # ── internal steps ────────────────────────────────────────────────
+
+    @classmethod
+    def _hitl_node_ids(cls, ceg: CognitiveExecutionGraph) -> list[str]:
+        """Return the IDs of interrupt nodes, including those in subgraphs."""
+        found: list[str] = []
+        for node in ceg.nodes:
+            if node.interrupt_before or node.interrupt_after:
+                found.append(node.id)
+            if node.subgraph is not None:
+                found.extend(cls._hitl_node_ids(node.subgraph))
+        return found
 
     def _validate(self, ceg: CognitiveExecutionGraph) -> None:
         """Validate the CEG for compilation.
@@ -276,9 +339,9 @@ class CEGCompiler:
 
         in_degree: dict[str, int] = {nid: 0 for nid in node_ids}
         for neighbors in adj.values():
-            for n in neighbors:
-                if n in in_degree:
-                    in_degree[n] += 1
+            for target in neighbors:
+                if target in in_degree:
+                    in_degree[target] += 1
 
         queue: deque[str] = deque(nid for nid, d in in_degree.items() if d == 0)
         visited = 0
@@ -339,32 +402,12 @@ class CEGCompiler:
 
         return result
 
-    def _translate(
-        self, ceg: CognitiveExecutionGraph, order: list[str]
-    ) -> StateGraph[CEGState]:
-        """Translate CEG nodes into a LangGraph StateGraph (structural pass).
-
-        Actual execution logic and edge routing are injected by ``_inject_runtime()``.
-        """
-        graph: StateGraph[CEGState] = StateGraph(CEGState)
-        node_map: dict[str, CEGNode] = {n.id: n for n in ceg.nodes}
-
-        for node_id in order:
-            node = node_map[node_id]
-            graph.add_node(node_id, self._make_node_function(node))
-
-        graph.add_edge(START, order[0])
-        for i in range(len(order) - 1):
-            graph.add_edge(order[i], order[i + 1])
-        graph.add_edge(order[-1], END)
-
-        return graph
-
     def _inject_runtime(
         self,
         ceg: CognitiveExecutionGraph,
         order: list[str],
         *,
+        engine: RuntimeDecisionEngine,
         checkpointer: Any | None = None,
     ) -> StateGraph[CEGState]:
         """Wire RuntimeDecisionEngine and all control-flow routing into the graph.
@@ -380,12 +423,12 @@ class CEGCompiler:
         Args:
             ceg: The source CEGGraph.
             order: Topological execution order (LOOP edges excluded).
+            engine: The RuntimeDecisionEngine shared by every node.
             checkpointer: Optional checkpointer for HITL support.
 
         Returns:
             A fully wired StateGraph ready to be compiled.
         """
-        engine = self._engine or RuntimeDecisionEngine()
         executor = self._executor
         node_map: dict[str, CEGNode] = {n.id: n for n in ceg.nodes}
         has_checkpointer = checkpointer is not None
@@ -413,7 +456,9 @@ class CEGCompiler:
             )
 
         # ── Classify edges ────────────────────────────────────────────
-        conditional_edges = [e for e in ceg.edges if e.edge_type == EdgeType.CONDITIONAL]
+        conditional_edges = [
+            e for e in ceg.edges if e.edge_type == EdgeType.CONDITIONAL
+        ]
         loop_edges = [e for e in ceg.edges if e.edge_type == EdgeType.LOOP]
 
         # Nodes reachable only through a conditional branch
@@ -541,9 +586,7 @@ class CEGCompiler:
             # whatever happens to sit next in the topological order: a sibling
             # branch can occupy that slot, which sends the loop out the wrong
             # way and leaves the real successor unwired.
-            exit_targets = sorted(
-                dst for src, dst in structural_edges if src == source
-            )
+            exit_targets = sorted(dst for src, dst in structural_edges if src == source)
             if source in conditional_by_source:
                 # The conditional router already drives this node's forward
                 # path; the loop only decides whether to go back.
@@ -585,47 +628,11 @@ class CEGCompiler:
 
     # ── helpers ───────────────────────────────────────────────────────
 
-    def _make_node_function(self, node: CEGNode) -> Any:
-        """Create a basic LangGraph node function (structural placeholder).
-
-        This function is used only by ``_translate()``; the runtime-wired version
-        produced by ``_make_runtime_node_function`` is used in the final graph.
-        """
-        executor = self._executor
-        node_id = node.id
-        objective = node.objective
-
-        def _node_fn(state: dict[str, Any]) -> dict[str, Any]:
-            inputs: dict[str, Any] = state.get("node_outputs", {})
-            result = executor.execute(
-                node_id=node_id,
-                objective=objective,
-                inputs=inputs,
-            )
-            return {
-                "node_outputs": {node_id: result.output},
-                "node_statuses": {node_id: "completed"},
-                "total_cost": result.cost,
-                "total_latency_ms": result.latency_ms,
-                "execution_log": [
-                    {
-                        "node_id": node_id,
-                        "status": "completed",
-                        "output": result.output,
-                        "cost": result.cost,
-                        "latency_ms": result.latency_ms,
-                        "confidence": result.confidence,
-                    }
-                ],
-            }
-
-        return _node_fn
-
     def _make_runtime_node_function(
         self,
         node: CEGNode,
         engine: RuntimeDecisionEngine,
-        executor: MockExecutor,
+        executor: Executor,
         *,
         has_checkpointer: bool = False,
         checkpointer: Any | None = None,
@@ -638,7 +645,7 @@ class CEGCompiler:
           - Calls ``engine.run_node()`` for model selection + execution.
           - Tracks loop iterations if this node is the source of any loop edges.
           - Optionally calls ``interrupt()`` after execution (interrupt_after).
-          - Handles ``NodeAbortError`` by re-raising it (LangGraph will surface it).
+          - Lets ``NodeAbortError`` propagate (LangGraph surfaces it to the caller).
 
         Args:
             node: The CEGNode this function wraps.
@@ -659,12 +666,14 @@ class CEGCompiler:
             if node.interrupt_before and has_checkpointer:
                 from langgraph.types import interrupt
 
-                approval = interrupt({
-                    "node_id": node.id,
-                    "objective": node.objective,
-                    "action": "approve_before",
-                    "message": f"Approval required before executing '{node.id}'",
-                })
+                approval = interrupt(
+                    {
+                        "node_id": node.id,
+                        "objective": node.objective,
+                        "action": "approve_before",
+                        "message": f"Approval required before executing '{node.id}'",
+                    }
+                )
                 # If the human rejected, skip this node
                 if approval is False or (
                     isinstance(approval, dict) and not approval.get("approved", True)
@@ -696,68 +705,13 @@ class CEGCompiler:
                 state_update_approval = {}
 
             # ── Execute the node (Subgraph or Single Node) ─────────────
-            try:
-                if node.is_subgraph and node.subgraph is not None:
-                    # Compile and execute inner subgraph
-                    sub_compiler = CEGCompiler(
-                        runtime_target=self.runtime_target,
-                        engine=engine,
-                        executor=executor,
-                    )
-                    compiled_sub = sub_compiler.compile(
-                        node.subgraph,
-                        checkpointer=checkpointer,
-                    )
-
-                    # Prepare merged input context for subgraph
-                    sub_input: dict[str, Any] = {
-                        **state.get("inputs", {}),
-                        **state.get("node_outputs", {}),
-                    }
-                    sub_result = compiled_sub.invoke(sub_input)
-
-                    sub_outputs = sub_result.get("node_outputs", {})
-                    sub_statuses = sub_result.get("node_statuses", {})
-                    sub_cost = float(sub_result.get("total_cost", 0.0))
-                    sub_latency = float(sub_result.get("total_latency_ms", 0.0))
-                    sub_log = sub_result.get("execution_log", [])
-
-                    # Tag inner logs with subgraph_parent
-                    enriched_sub_log = []
-                    for entry in sub_log:
-                        e_dict = dict(entry) if isinstance(entry, dict) else entry
-                        if isinstance(e_dict, dict):
-                            e_dict["subgraph_parent"] = node.id
-                        enriched_sub_log.append(e_dict)
-
-                    parent_status = (
-                        "completed"
-                        if all(st == "completed" for st in sub_statuses.values())
-                        else "failed"
-                    )
-
-                    # Summary log entry for the parent node
-                    enriched_sub_log.append({
-                        "node_id": node.id,
-                        "status": parent_status,
-                        "output": sub_outputs,
-                        "cost": sub_cost,
-                        "latency_ms": sub_latency,
-                        "confidence": 1.0,
-                        "model_used": "subgraph_composite",
-                    })
-
-                    result = {
-                        "node_outputs": {node.id: sub_outputs},
-                        "node_statuses": {node.id: parent_status},
-                        "total_cost": sub_cost,
-                        "total_latency_ms": sub_latency,
-                        "execution_log": enriched_sub_log,
-                    }
-                else:
-                    result = engine.run_node(node=node, state=state, executor=executor)
-            except NodeAbortError:
-                raise  # propagate to LangGraph / caller
+            result: dict[str, Any]
+            if node.is_subgraph and node.subgraph is not None:
+                result = self._run_subgraph(
+                    node, node.subgraph, state, engine, executor, checkpointer
+                )
+            else:
+                result = engine.run_node(node=node, state=state, executor=executor)
 
             # Increment loop counter if this node is a loop source
             if loops:
@@ -769,24 +723,25 @@ class CEGCompiler:
 
             # Merge approval info into result
             if state_update_approval:
-                if "human_approvals" not in result:
-                    result["human_approvals"] = {}
-                result["human_approvals"].update(
-                    state_update_approval.get("human_approvals", {})
+                approvals_before: dict[str, Any] = result.setdefault(
+                    "human_approvals", {}
                 )
+                approvals_before.update(state_update_approval["human_approvals"])
 
             # ── HITL: interrupt after execution ───────────────────────
             if node.interrupt_after and has_checkpointer:
                 from langgraph.types import interrupt
 
-                review = interrupt({
-                    "node_id": node.id,
-                    "output": result.get("node_outputs", {}).get(node.id),
-                    "action": "approve_after",
-                    "message": f"Review required for output of '{node.id}'",
-                })
+                review = interrupt(
+                    {
+                        "node_id": node.id,
+                        "output": result.get("node_outputs", {}).get(node.id),
+                        "action": "approve_after",
+                        "message": f"Review required for output of '{node.id}'",
+                    }
+                )
                 # Record the review decision
-                approvals = result.get("human_approvals", {})
+                approvals: dict[str, Any] = result.get("human_approvals", {})
                 approvals[node.id] = {
                     **approvals.get(node.id, {}),
                     "after": review,
@@ -800,6 +755,79 @@ class CEGCompiler:
             return result
 
         return _runtime_fn
+
+    def _run_subgraph(
+        self,
+        node: CEGNode,
+        subgraph: CognitiveExecutionGraph,
+        state: dict[str, Any],
+        engine: RuntimeDecisionEngine,
+        executor: Executor,
+        checkpointer: Any | None,
+    ) -> dict[str, Any]:
+        """Execute ``subgraph`` as the body of the composite node ``node``.
+
+        The subgraph shares the parent's engine (and so its budget) and
+        receives the parent's graph inputs and upstream node outputs as its
+        own graph inputs. It reuses the parent's checkpointer so that its HITL
+        nodes stay interruptible; the parent's ``compile()`` has already
+        refused inner HITL nodes when there is no checkpointer.
+        """
+        sub_compiler = CEGCompiler(
+            runtime_target=self.runtime_target,
+            engine=engine,
+            executor=executor,
+        )
+        compiled_sub = sub_compiler.compile(
+            subgraph,
+            checkpointer=checkpointer,
+            ignore_interrupts=checkpointer is None,
+        )
+
+        sub_inputs: dict[str, Any] = {
+            **state.get("inputs", {}),
+            **state.get("node_outputs", {}),
+        }
+        sub_result = compiled_sub._invoke_nested({"inputs": sub_inputs})
+
+        sub_outputs = sub_result.get("node_outputs", {})
+        sub_statuses: dict[str, str] = sub_result.get("node_statuses", {})
+        sub_cost = float(sub_result.get("total_cost", 0.0))
+        sub_latency = float(sub_result.get("total_latency_ms", 0.0))
+
+        # Tag inner logs with subgraph_parent
+        enriched_sub_log: list[dict[str, Any]] = [
+            {**entry, "subgraph_parent": node.id}
+            for entry in sub_result.get("execution_log", [])
+        ]
+
+        # A branch skipped by a condition is a normal outcome, not a failure.
+        parent_status = (
+            "completed"
+            if all(st in ("completed", "skipped") for st in sub_statuses.values())
+            else "failed"
+        )
+
+        # Summary log entry for the parent node
+        enriched_sub_log.append(
+            {
+                "node_id": node.id,
+                "status": parent_status,
+                "output": sub_outputs,
+                "cost": sub_cost,
+                "latency_ms": sub_latency,
+                "confidence": 1.0,
+                "model_used": "subgraph_composite",
+            }
+        )
+
+        return {
+            "node_outputs": {node.id: sub_outputs},
+            "node_statuses": {node.id: parent_status},
+            "total_cost": sub_cost,
+            "total_latency_ms": sub_latency,
+            "execution_log": enriched_sub_log,
+        }
 
     @staticmethod
     def _make_conditional_router(
@@ -876,25 +904,6 @@ class CEGCompiler:
             return list(continue_targets)
 
         return _loop_router
-
-    @staticmethod
-    def _make_loop_counter_wrapper(
-        original_fn: Any,
-        loop_id: str,
-    ) -> Any:
-        """Wrap a node function to increment the loop counter after execution.
-
-        This wrapper is applied to the first node in a loop body so that
-        each iteration increments the ``loop_counts[loop_id]`` counter.
-        """
-
-        def _wrapped(state: dict[str, Any]) -> dict[str, Any]:
-            result = original_fn(state)
-            current_count = state.get("loop_counts", {}).get(loop_id, 0)
-            result["loop_counts"] = {loop_id: current_count + 1}
-            return result
-
-        return _wrapped
 
     @staticmethod
     def _make_skip_node(target_id: str) -> Any:

@@ -17,8 +17,9 @@ Key public API:
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
@@ -28,6 +29,9 @@ from ceg.runtime.fallback import (
     FallbackOrchestrator,
     FallbackPolicy,
 )
+
+if TYPE_CHECKING:
+    from ceg.compiler.mock_executor import Executor
 
 # ── Custom exceptions ─────────────────────────────────────────────────────────
 
@@ -182,8 +186,9 @@ class Constraint(BaseModel):
 class SelectionWeights:
     """Scoring weights for the model selection algorithm.
 
-    The three weights must conceptually sum to 1.0 (not enforced at runtime
-    to allow experimentation). Defaults favour quality (w1=0.5).
+    The three weights must sum to 1.0 (checked in ``__post_init__``). Each
+    weight applies to a score normalised to [0, 1], so the weights really set
+    the trade-off between quality, cost and speed.
 
     Attributes:
         w1: Weight for quality score (capability quality).
@@ -261,6 +266,75 @@ DEFAULT_MODEL_REGISTRY: list[ModelProfile] = [
 # ── Core selection algorithm ──────────────────────────────────────────────────
 
 
+def rank_models(
+    node: CEGNode,
+    constraints: Constraint,
+    available_models: list[ModelProfile],
+    weights: SelectionWeights | None = None,
+) -> list[tuple[ModelProfile, float]]:
+    """Return the eligible models for ``node`` with their score, best first.
+
+    Algorithm (spec formula, with normalised terms):
+        Score = w1 * Quality + w2 * norm(1/Cost) + w3 * norm(1/Latency)
+
+    ``norm(1/x)`` divides ``1/x`` by its maximum over the compared models, so
+    the cost and speed terms lie in [0, 1] like the quality term. Without this
+    normalisation ``1/Cost`` reaches several hundred and the cheapest model
+    always wins, whatever the weights.
+
+    Hard constraints (candidates that violate any are excluded):
+        - ``estimated_cost``       ≤ ``constraints.budget_remaining``
+        - ``estimated_latency_ms`` ≤ ``constraints.max_latency_ms``
+        - model must support all ``node.required_capabilities``
+
+    Tier hint: when ``node.model_tier_hint`` is set and at least one eligible
+    model belongs to that tier, only models of that tier are compared. If no
+    model of the hinted tier is eligible, all eligible models are compared.
+
+    Returns:
+        ``(model, score)`` pairs sorted by decreasing score (empty if none is
+        eligible).
+    """
+    if weights is None:
+        weights = SelectionWeights()
+
+    eligible = [
+        m
+        for m in available_models
+        if m.estimated_cost <= constraints.budget_remaining
+        and m.estimated_latency_ms <= constraints.max_latency_ms
+        and m.supports(node.required_capabilities)
+    ]
+
+    hint = node.model_tier_hint
+    if hint is not None:
+        in_tier = [m for m in eligible if m.tier == hint]
+        if in_tier:
+            eligible = in_tier
+
+    if not eligible:
+        return []
+
+    eps = 1e-6
+    min_cost = min(m.estimated_cost for m in eligible)
+    min_latency = min(m.estimated_latency_ms for m in eligible)
+
+    ranked: list[tuple[ModelProfile, float]] = []
+    for model in eligible:
+        quality_score = model.quality_rating_for(node.required_capabilities)
+        cost_score = (min_cost + eps) / (model.estimated_cost + eps)
+        latency_score = (min_latency + eps) / (model.estimated_latency_ms + eps)
+        score = (
+            weights.w1 * quality_score
+            + weights.w2 * cost_score
+            + weights.w3 * latency_score
+        )
+        ranked.append((model, score))
+
+    ranked.sort(key=lambda pair: pair[1], reverse=True)
+    return ranked
+
+
 def select_model(
     node: CEGNode,
     constraints: Constraint,
@@ -269,13 +343,7 @@ def select_model(
 ) -> ModelProfile:
     """Select the best model for a given node under the specified constraints.
 
-    Algorithm (spec-compliant):
-        Score = w1 * quality_capability + w2 * (1/cost) + w3 * (1/latency)
-
-    Hard constraints (candidates that violate any are silently excluded):
-        - ``estimated_cost``       ≤ ``constraints.budget_remaining``
-        - ``estimated_latency_ms`` ≤ ``constraints.max_latency_ms``
-        - model must support all ``node.required_capabilities``
+    See ``rank_models()`` for the scoring algorithm and tier-hint handling.
 
     Args:
         node: The CEGNode requesting model selection.
@@ -289,33 +357,8 @@ def select_model(
     Raises:
         NoEligibleModelError: If no model satisfies all hard constraints.
     """
-    if weights is None:
-        weights = SelectionWeights()
-
-    candidates: list[tuple[ModelProfile, float]] = []
-
-    for model in available_models:
-        # Hard constraint 1: budget
-        if model.estimated_cost > constraints.budget_remaining:
-            continue
-        # Hard constraint 2: latency
-        if model.estimated_latency_ms > constraints.max_latency_ms:
-            continue
-        # Hard constraint 3: required capabilities
-        if not model.supports(node.required_capabilities):
-            continue
-
-        quality_score = model.quality_rating_for(node.required_capabilities)
-        cost_score = 1.0 / (model.estimated_cost + 0.001)
-        latency_score = 1.0 / (model.estimated_latency_ms + 0.001)
-        score = (
-            weights.w1 * quality_score
-            + weights.w2 * cost_score
-            + weights.w3 * latency_score
-        )
-        candidates.append((model, score))
-
-    if not candidates:
+    ranked = rank_models(node, constraints, available_models, weights)
+    if not ranked:
         caps = node.required_capabilities or ["<none>"]
         raise NoEligibleModelError(
             node_id=node.id,
@@ -325,8 +368,7 @@ def select_model(
                 f"required_capabilities={caps}"
             ),
         )
-
-    return max(candidates, key=lambda x: x[1])[0]
+    return ranked[0][0]
 
 
 # ── RuntimeDecisionEngine ─────────────────────────────────────────────────────
@@ -336,7 +378,8 @@ class RuntimeDecisionEngine:
     """Stateful orchestrator injected into each LangGraph node at compile time.
 
     Responsibilities:
-      - Maintains a global budget counter shared across all node executions.
+      - Maintains a budget counter shared by all nodes of one graph execution
+        (reset by ``CompiledWorkflow.invoke()``, kept across ``resume()``).
       - Selects the optimal model before each node execution.
       - Delegates execution to the MockExecutor.
       - Triggers the FallbackOrchestrator on failure.
@@ -362,6 +405,8 @@ class RuntimeDecisionEngine:
     ) -> None:
         self.budget_total = budget_total
         self.budget_used: float = 0.0
+        # Parallel branches run in worker threads and spend concurrently.
+        self._budget_lock = threading.Lock()
         self.max_latency_ms = max_latency_ms
         self.available_models: list[ModelProfile] = (
             available_models
@@ -401,7 +446,13 @@ class RuntimeDecisionEngine:
 
     def spend(self, amount: float) -> None:
         """Record a cost expenditure against the global budget."""
-        self.budget_used += amount
+        with self._budget_lock:
+            self.budget_used += amount
+
+    def reset_budget(self) -> None:
+        """Start a new graph execution with the full budget available."""
+        with self._budget_lock:
+            self.budget_used = 0.0
 
     # ── Main entry point ──────────────────────────────────────────────────────
 
@@ -409,7 +460,7 @@ class RuntimeDecisionEngine:
         self,
         node: CEGNode,
         state: dict[str, Any],
-        executor: Any,  # MockExecutor — avoid circular import at type level
+        executor: Executor,
     ) -> dict[str, Any]:
         """Execute a CEGNode through the full decision pipeline.
 
@@ -440,60 +491,74 @@ class RuntimeDecisionEngine:
             return self._handle_budget_exhausted(node, executor, state)
 
         # ── Step 2: model selection ───────────────────────────────────────
-        try:
-            model = select_model(
-                node=node,
-                constraints=constraints,
-                available_models=self.available_models,
-                weights=self.weights,
-            )
-        except NoEligibleModelError:
+        ranked = rank_models(
+            node=node,
+            constraints=constraints,
+            available_models=self.available_models,
+            weights=self.weights,
+        )
+        if not ranked:
             # Budget insufficient for any model → degradation path
             return self._handle_budget_exhausted(node, executor, state)
+        model, score = ranked[0]
+        decision = {
+            "selected_model": model.name,
+            "tier": model.tier.value,
+            "tier_hint": node.model_tier_hint.value if node.model_tier_hint else None,
+            "score": round(score, 6),
+            "candidates": [m.name for m, _ in ranked],
+            "budget_remaining": round(self.budget_remaining, 6),
+        }
 
         # ── Step 3: attempt execution ─────────────────────────────────────
         try:
             result = executor.execute(
                 node_id=node.id,
                 objective=node.objective,
-                inputs=state.get("node_outputs", {}),
+                inputs=executor_inputs(state),
+                model=model,
             )
-            self.spend(result.cost)
-            return {
-                "node_outputs": {node.id: result.output},
-                "node_statuses": {node.id: "completed"},
-                "total_cost": result.cost,
-                "total_latency_ms": result.latency_ms,
-                "execution_log": [
-                    {
-                        "node_id": node.id,
-                        "status": "completed",
-                        "output": result.output,
-                        "cost": result.cost,
-                        "latency_ms": result.latency_ms,
-                        "confidence": result.confidence,
-                        "model_used": model.name,
-                        "attempt": 1,
-                    }
-                ],
-            }
-
         except ExecutionError as exc:
             # ── Step 4: trigger fallback chain ────────────────────────────
-            return self._orchestrator.run(
+            update = self._orchestrator.run(
                 node=node,
                 executor=executor,
                 state=state,
                 model=model,
                 error=exc,
             )
+            for entry in update.get("execution_log", []):
+                entry.setdefault("decision", decision)
+            return update
+
+        self.spend(result.cost)
+        return {
+            "node_outputs": {node.id: result.output},
+            "node_statuses": {node.id: "completed"},
+            "total_cost": result.cost,
+            "total_latency_ms": result.latency_ms,
+            "execution_log": [
+                {
+                    "node_id": node.id,
+                    "status": "completed",
+                    "output": result.output,
+                    "cost": result.cost,
+                    "latency_ms": result.latency_ms,
+                    "confidence": result.confidence,
+                    "model_used": model.name,
+                    "attempt": 1,
+                    "decision": decision,
+                    "fallbacks_triggered": [],
+                }
+            ],
+        }
 
     # ── Private helpers ───────────────────────────────────────────────────────
 
     def _handle_budget_exhausted(
         self,
         node: CEGNode,
-        executor: Any,
+        executor: Executor,
         state: dict[str, Any],
     ) -> dict[str, Any]:
         """Handle the case where no model can be funded by the current budget.
@@ -502,10 +567,11 @@ class RuntimeDecisionEngine:
         """
         from ceg.runtime.fallback import apply_abort, apply_degradation
 
-        # Find cheapest available model (ignoring budget constraint)
+        # Degradation runs a cheaper, simplified version of the node on the
+        # cheapest model; ``apply_degradation`` refuses it if even that does
+        # not fit in the remaining budget.
         if self.available_models:
             cheapest = min(self.available_models, key=lambda m: m.estimated_cost)
-            # Try degradation with very loose latency
             result = apply_degradation(
                 node=node,
                 executor=executor,
@@ -514,10 +580,23 @@ class RuntimeDecisionEngine:
                 model=cheapest,
             )
             if result is not None:
+                result["execution_log"][0]["fallbacks_triggered"] = [
+                    FallbackPolicy.DEGRADATION.value
+                ]
                 return result
 
         apply_abort(
-            node, reason="Budget exhausted — no eligible model after degradation."
+            node,
+            reason="Budget exhausted — no eligible model after degradation.",
+            fallbacks_triggered=[FallbackPolicy.DEGRADATION.value],
         )
         # unreachable, but satisfies type checker
         return {}  # pragma: no cover
+
+
+def executor_inputs(state: dict[str, Any]) -> dict[str, Any]:
+    """Inputs handed to an executor: graph inputs, then upstream node outputs.
+
+    Node outputs take precedence over a graph input with the same key.
+    """
+    return {**state.get("inputs", {}), **state.get("node_outputs", {})}

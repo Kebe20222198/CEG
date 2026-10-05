@@ -6,6 +6,7 @@ single source and converge at a join node.
 """
 
 from collections import Counter
+from typing import Any
 
 import pytest
 
@@ -13,7 +14,7 @@ from ceg.compiler.compiler import CEGCompiler
 from ceg.compiler.mock_executor import MockExecutor
 from ceg.models.graph import CEGEdge, CEGGraph, EdgeType
 from ceg.models.node import CEGNode
-
+from ceg.runtime.decision_engine import DEFAULT_MODEL_REGISTRY, RuntimeDecisionEngine
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -288,7 +289,7 @@ class TestParallelFanInExecutesOnce:
     """
 
     @staticmethod
-    def _counts(result: dict) -> Counter:
+    def _counts(result: dict[str, Any]) -> Counter[str]:
         return Counter(entry["node_id"] for entry in result["execution_log"])
 
     def test_fan_out_every_node_executes_exactly_once(self):
@@ -299,16 +300,12 @@ class TestParallelFanInExecutesOnce:
     def test_triple_fan_out_every_node_executes_exactly_once(self):
         """A 3-way fan-out still joins into a single execution of E."""
         result = CEGCompiler().compile(_triple_fan_out_graph()).invoke()
-        assert self._counts(result) == Counter(
-            {"A": 1, "B": 1, "C": 1, "D": 1, "E": 1}
-        )
+        assert self._counts(result) == Counter({"A": 1, "B": 1, "C": 1, "D": 1, "E": 1})
 
     def test_mixed_sequential_parallel_executes_exactly_once(self):
         """Mixing sequential and parallel edges does not duplicate any node."""
         result = CEGCompiler().compile(_sequential_then_parallel_graph()).invoke()
-        assert self._counts(result) == Counter(
-            {"A": 1, "B": 1, "C": 1, "D": 1, "E": 1}
-        )
+        assert self._counts(result) == Counter({"A": 1, "B": 1, "C": 1, "D": 1, "E": 1})
 
     def test_join_cost_is_not_multiplied_by_branch_count(self):
         """Total cost equals the sum of each node's single execution cost."""
@@ -316,9 +313,11 @@ class TestParallelFanInExecutesOnce:
         graph = _triple_fan_out_graph()
         result = CEGCompiler(executor=executor).compile(graph).invoke()
 
-        expected = sum(
-            executor.execute(n.id, n.objective, {}).cost for n in graph.nodes
-        )
+        # Each node is billed once, at the price of the model that ran it.
+        prices = {m.name: m.estimated_cost for m in DEFAULT_MODEL_REGISTRY}
+        log = result["execution_log"]
+        assert len(log) == len(graph.nodes)
+        expected = sum(prices[entry["model_used"]] for entry in log)
         assert result["total_cost"] == pytest.approx(expected)
 
     def test_sibling_branches_are_not_chained_together(self):
@@ -326,7 +325,11 @@ class TestParallelFanInExecutesOnce:
         compiler = CEGCompiler()
         graph = _triple_fan_out_graph()
         wired = set(
-            compiler._inject_runtime(graph, compiler._topological_sort(graph)).edges
+            compiler._inject_runtime(
+                graph,
+                compiler._topological_sort(graph),
+                engine=RuntimeDecisionEngine(),
+            ).edges
         )
 
         for left in ("B", "C", "D"):
@@ -341,16 +344,18 @@ class TestParallelFanInExecutesOnce:
         E once per branch.
         """
         result = CEGCompiler().compile(_sequential_join_graph()).invoke()
-        assert self._counts(result) == Counter(
-            {"A": 1, "B": 1, "C": 1, "D": 1, "E": 1}
-        )
+        assert self._counts(result) == Counter({"A": 1, "B": 1, "C": 1, "D": 1, "E": 1})
 
     def test_sequential_join_does_not_chain_siblings(self):
         """No edge is wired between the three sibling branches."""
         compiler = CEGCompiler()
         graph = _sequential_join_graph()
         wired = set(
-            compiler._inject_runtime(graph, compiler._topological_sort(graph)).edges
+            compiler._inject_runtime(
+                graph,
+                compiler._topological_sort(graph),
+                engine=RuntimeDecisionEngine(),
+            ).edges
         )
         siblings = {"B", "C", "D"}
         assert not [(a, b) for (a, b) in wired if a in siblings and b in siblings]
@@ -384,9 +389,11 @@ class TestParallelFanInExecutesOnce:
         conditional = [e for e in graph.edges if e.edge_type == EdgeType.CONDITIONAL]
         assert len(conditional) == 1
 
-        detect_output = ParallelSalesExecutor().execute(
-            conditional[0].source, "objective", {}
-        ).output
+        detect_output = (
+            ParallelSalesExecutor()
+            .execute(conditional[0].source, "objective", {})
+            .output
+        )
         assert conditional[0].condition in detect_output
 
         result = CEGCompiler(executor=ParallelSalesExecutor()).compile(graph).invoke()

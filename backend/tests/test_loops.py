@@ -6,6 +6,7 @@ max_iterations guards against infinite loops.
 """
 
 from collections import Counter
+from typing import Any
 
 import pytest
 
@@ -13,7 +14,6 @@ from ceg.compiler.compiler import CEGCompiler
 from ceg.compiler.mock_executor import MockExecutor
 from ceg.models.graph import CEGEdge, CEGGraph, EdgeType
 from ceg.models.node import CEGNode
-
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -30,17 +30,17 @@ class LoopAwareMockExecutor(MockExecutor):
         loop_node_id: str,
         loop_true_count: int = 2,
         condition_key: str = "should_loop",
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self._loop_node_id = loop_node_id
         self._loop_true_count = loop_true_count
         self._condition_key = condition_key
         self._call_count: dict[str, int] = {}
 
-    def execute(self, node_id, objective, inputs, attempt=1):
+    def run(self, node_id, objective, inputs, attempt=1):
         self._call_count[node_id] = self._call_count.get(node_id, 0) + 1
-        result = super().execute(node_id, objective, inputs, attempt)
+        result = super().run(node_id, objective, inputs, attempt)
 
         # For the loop-control node, add the condition key
         if node_id == self._loop_node_id:
@@ -183,9 +183,7 @@ class TestLoopExecution:
     def test_loop_executes_correct_iterations(self):
         """Loop executes the expected number of iterations based on condition."""
         # Executor says should_loop=True for 2 calls, then False
-        executor = LoopAwareMockExecutor(
-            loop_node_id="C", loop_true_count=2
-        )
+        executor = LoopAwareMockExecutor(loop_node_id="C", loop_true_count=2)
         compiler = CEGCompiler(executor=executor)
         graph = _simple_loop_graph(max_iterations=5)
         workflow = compiler.compile(graph)
@@ -208,7 +206,8 @@ class TestLoopExecution:
         """Loop stops at max_iterations even if condition is still True."""
         # Executor always says should_loop=True (infinite loop)
         executor = LoopAwareMockExecutor(
-            loop_node_id="C", loop_true_count=100  # always True
+            loop_node_id="C",
+            loop_true_count=100,  # always True
         )
         compiler = CEGCompiler(executor=executor)
         graph = _simple_loop_graph(max_iterations=3)
@@ -222,9 +221,7 @@ class TestLoopExecution:
 
     def test_loop_accumulates_cost(self):
         """Cost is accumulated across all loop iterations."""
-        executor = LoopAwareMockExecutor(
-            loop_node_id="C", loop_true_count=1
-        )
+        executor = LoopAwareMockExecutor(loop_node_id="C", loop_true_count=1)
         compiler = CEGCompiler(executor=executor)
         graph = _simple_loop_graph(max_iterations=5)
         workflow = compiler.compile(graph)
@@ -235,7 +232,8 @@ class TestLoopExecution:
     def test_loop_with_no_iterations(self):
         """Loop with condition immediately False executes body only once."""
         executor = LoopAwareMockExecutor(
-            loop_node_id="C", loop_true_count=0  # immediately False
+            loop_node_id="C",
+            loop_true_count=0,  # immediately False
         )
         compiler = CEGCompiler(executor=executor)
         graph = _simple_loop_graph(max_iterations=5)
@@ -274,11 +272,11 @@ class TestLoopExecution:
 class _FixedOutputExecutor(MockExecutor):
     """Executor returning the same payload for every node."""
 
-    def __init__(self, payload: dict) -> None:
+    def __init__(self, payload: dict[str, Any]) -> None:
         super().__init__()
         self.payload = payload
 
-    def execute(self, node_id, objective, inputs, attempt=1):
+    def run(self, node_id, objective, inputs, attempt=1):
         from ceg.compiler.mock_executor import ExecutionResult
 
         return ExecutionResult(
@@ -286,7 +284,7 @@ class _FixedOutputExecutor(MockExecutor):
         )
 
 
-def _counts(graph: CEGGraph, payload: dict) -> Counter:
+def _counts(graph: CEGGraph, payload: dict[str, Any]) -> Counter[str]:
     """Run ``graph`` and count how many times each node executed."""
     workflow = CEGCompiler(executor=_FixedOutputExecutor(payload)).compile(graph)
     result = workflow.invoke()

@@ -6,12 +6,19 @@ execution of CEG nodes. Wired into the Runtime Decision Engine in S3.
 S3 additions:
   - ``ExecutionError`` exception for controlled failure simulation
   - ``failure_nodes`` / ``max_failures`` to test fallback strategies
+
+Executors are written as a template method: ``execute()`` handles failure
+simulation and model billing, subclasses only implement ``run()`` (the business
+logic of each node).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from ceg.runtime.decision_engine import ModelProfile
 
 # ── Exceptions ────────────────────────────────────────────────────────────────
 
@@ -44,6 +51,22 @@ class ExecutionResult:
 
 
 # ── Executor ──────────────────────────────────────────────────────────────────
+
+
+class Executor(Protocol):
+    """What the runtime needs from an executor: ``MockExecutor`` or any object
+    with a compatible ``execute()`` method."""
+
+    def execute(
+        self,
+        node_id: str,
+        objective: str,
+        inputs: dict[str, Any],
+        attempt: int = 1,
+        model: ModelProfile | None = None,
+    ) -> ExecutionResult:
+        """Execute one node with the selected model."""
+        ...
 
 
 class MockExecutor:
@@ -91,25 +114,27 @@ class MockExecutor:
         objective: str,
         inputs: dict[str, Any],
         attempt: int = 1,
+        model: ModelProfile | None = None,
     ) -> ExecutionResult:
-        """Simulate execution of a cognitive task node.
+        """Execute a node: simulate configured failures, run it, bill the model.
 
-        Output, cost, and latency are deterministically derived from
-        the ``node_id`` and ``objective`` so that tests produce reproducible
-        results.
+        Subclasses override ``run()``, not this method.
 
         Args:
             node_id: Unique identifier of the node being executed.
             objective: The node's objective / instruction text.
-            inputs: Outputs from upstream nodes available as context.
+            inputs: Initial graph inputs merged with upstream node outputs.
             attempt: Current attempt number (tracked in output for traceability).
+            model: The model selected by the RuntimeDecisionEngine. When given,
+                the cost and latency of the result are those of the model, so
+                the model choice is reflected in the measured metrics.
 
         Returns:
-            ExecutionResult with simulated output, cost, latency, and confidence.
+            ExecutionResult with output, cost, latency, and confidence.
 
         Raises:
             ExecutionError: If this node is configured to fail and has not yet
-                reached its ``max_failures`` limit.
+                reached its ``max_failures`` limit, or if ``run()`` fails.
         """
         if self._should_fail(node_id):
             self._failure_count[node_id] = self._failure_count.get(node_id, 0) + 1
@@ -121,6 +146,28 @@ class MockExecutor:
                 ),
             )
 
+        result = self.run(node_id, objective, inputs, attempt)
+        if model is None:
+            return result
+        return replace(
+            result,
+            cost=model.estimated_cost,
+            latency_ms=model.estimated_latency_ms,
+        )
+
+    def run(
+        self,
+        node_id: str,
+        objective: str,
+        inputs: dict[str, Any],
+        attempt: int = 1,
+    ) -> ExecutionResult:
+        """Produce the node result (mock: deterministic placeholder output).
+
+        Output, cost, and latency are deterministically derived from
+        the ``node_id`` and ``objective`` so that tests produce reproducible
+        results.
+        """
         output: dict[str, Any] = {
             "node_id": node_id,
             "result": f"Mock result for '{objective}'",

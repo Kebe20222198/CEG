@@ -474,14 +474,15 @@ class TestRuntimeDecisionEngine:
     def test_budget_exhausted_triggers_degradation(
         self, all_caps_models: list[ModelProfile]
     ) -> None:
-        """Engine attempts degradation when budget is 0.0."""
+        """Budget too small for any model, but enough for a degraded run."""
         node = CEGNode(
             id="costly_node",
             objective="A very important task",
             required_capabilities=["data_analysis"],
         )
+        cheapest = min(m.estimated_cost for m in all_caps_models)
         engine = RuntimeDecisionEngine(
-            budget_total=0.0,  # no budget at all
+            budget_total=cheapest * 0.75,  # below every model, above half price
             available_models=all_caps_models,
         )
         executor = MockExecutor()
@@ -490,6 +491,19 @@ class TestRuntimeDecisionEngine:
         assert result["node_statuses"]["costly_node"] == "completed"
         output = result["node_outputs"]["costly_node"]
         assert output.get("degraded") is True
+        assert engine.budget_used <= engine.budget_total
+
+    def test_zero_budget_aborts_instead_of_overspending(
+        self, all_caps_models: list[ModelProfile]
+    ) -> None:
+        """With no budget left even degradation is refused: the node aborts."""
+        node = CEGNode(id="costly_node", objective="A very important task")
+        engine = RuntimeDecisionEngine(
+            budget_total=0.0, available_models=all_caps_models
+        )
+        with pytest.raises(NodeAbortError):
+            engine.run_node(node, {"node_outputs": {}}, MockExecutor())
+        assert engine.budget_used == 0.0
 
     def test_budget_exhausted_and_executor_failed_triggers_abort(
         self, all_caps_models: list[ModelProfile]

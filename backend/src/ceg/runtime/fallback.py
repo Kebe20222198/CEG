@@ -15,19 +15,22 @@ Strategies (in escalation order of severity):
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from ceg.compiler.mock_executor import MockExecutor
+    from ceg.compiler.mock_executor import Executor
     from ceg.models.node import CEGNode
     from ceg.runtime.decision_engine import (
         ModelProfile,
         RuntimeDecisionEngine,
         SelectionWeights,
     )
+
+logger = logging.getLogger(__name__)
 
 
 # ── Custom exceptions ─────────────────────────────────────────────────────────
@@ -38,11 +41,20 @@ class NodeAbortError(Exception):
 
     Propagated up to the LangGraph node wrapper, causing the entire
     graph execution to halt immediately.
+
+    Attributes:
+        fallbacks_triggered: Strategies tried before aborting, in order.
     """
 
-    def __init__(self, node_id: str, reason: str) -> None:
+    def __init__(
+        self,
+        node_id: str,
+        reason: str,
+        fallbacks_triggered: list[str] | None = None,
+    ) -> None:
         self.node_id = node_id
         self.reason = reason
+        self.fallbacks_triggered: list[str] = list(fallbacks_triggered or [])
         super().__init__(f"Abort on node '{node_id}': {reason}")
 
 
@@ -59,14 +71,19 @@ class NodeSkippedError(Exception):
         super().__init__(f"Node '{node_id}' was skipped: {reason}")
 
 
-class FallbackExhaustedError(Exception):
+class FallbackExhaustedError(NodeAbortError):
     """Raised when the entire fallback chain is exhausted without success."""
 
-    def __init__(self, node_id: str) -> None:
+    def __init__(
+        self, node_id: str, fallbacks_triggered: list[str] | None = None
+    ) -> None:
         self.node_id = node_id
-        super().__init__(
+        self.reason = "fallback chain exhausted"
+        self.fallbacks_triggered = list(fallbacks_triggered or [])
+        Exception.__init__(
+            self,
             f"All fallback strategies exhausted for node '{node_id}'. "
-            "Aborting execution."
+            "Aborting execution.",
         )
 
 
@@ -114,7 +131,7 @@ class FallbackConfig:
 
 def apply_retry(
     node: CEGNode,
-    executor: MockExecutor,
+    executor: Executor,
     engine: RuntimeDecisionEngine,
     state: dict[str, Any],
     model: ModelProfile,
@@ -127,30 +144,35 @@ def apply_retry(
     exhausted (caller should proceed to the next strategy in the chain).
     """
     from ceg.compiler.mock_executor import ExecutionError  # avoid circular import
+    from ceg.runtime.decision_engine import executor_inputs
 
-    last_error: Exception | None = None
     for try_num in range(1, max_retries + 1):
         try:
             result = executor.execute(
                 node_id=node.id,
                 objective=node.objective,
-                inputs=state.get("node_outputs", {}),
+                inputs=executor_inputs(state),
                 attempt=attempt + try_num,
+                model=model,
             )
-            engine.spend(result.cost)
-            return _make_success_update(node.id, result, model.name, try_num)
         except ExecutionError as exc:
-            last_error = exc
+            logger.warning(
+                "Retry %d/%d failed for node '%s': %s",
+                try_num,
+                max_retries,
+                node.id,
+                exc,
+            )
             continue
+        engine.spend(result.cost)
+        return _make_success_update(node.id, result, model.name, try_num + 1)
 
-    # All retries exhausted
-    _ = last_error  # kept for traceability
     return None
 
 
 def apply_escalation(
     node: CEGNode,
-    executor: MockExecutor,
+    executor: Executor,
     engine: RuntimeDecisionEngine,
     state: dict[str, Any],
     current_model: ModelProfile,
@@ -164,6 +186,7 @@ def apply_escalation(
     """
     from ceg.compiler.mock_executor import ExecutionError
     from ceg.models.node import ModelTierHint
+    from ceg.runtime.decision_engine import executor_inputs, rank_models
 
     tier_order = [
         ModelTierHint.FAST,
@@ -179,51 +202,62 @@ def apply_escalation(
         m
         for m in engine.available_models
         if m.tier in tier_order[current_tier_idx + 1 :]
-        and m.supports(node.required_capabilities)
-        and m.estimated_cost <= engine.budget_remaining
-        and m.estimated_latency_ms <= engine.default_constraint.max_latency_ms
     ]
-    if not higher_models:
+    # The tier hint is what failed: escalation compares every higher tier.
+    unhinted = node.model_copy(update={"model_tier_hint": None})
+    ranked = rank_models(unhinted, engine.default_constraint, higher_models, weights)
+    if not ranked:
         return None
 
-    # Pick the best scoring higher-tier model
-    best = max(
-        higher_models,
-        key=lambda m: (
-            weights.w1 * m.quality_rating_for(node.required_capabilities)
-            + weights.w2 * (1.0 / (m.estimated_cost + 0.001))
-            + weights.w3 * (1.0 / (m.estimated_latency_ms + 0.001))
-        ),
-    )
+    best = ranked[0][0]
     try:
         result = executor.execute(
             node_id=node.id,
             objective=node.objective,
-            inputs=state.get("node_outputs", {}),
+            inputs=executor_inputs(state),
+            model=best,
         )
-        engine.spend(result.cost)
-        return _make_success_update(node.id, result, best.name)
-    except ExecutionError:
+    except ExecutionError as exc:
+        logger.warning(
+            "Escalation to '%s' failed for node '%s': %s", best.name, node.id, exc
+        )
         return None
+    engine.spend(result.cost)
+    return _make_success_update(node.id, result, best.name)
 
 
 def apply_degradation(
     node: CEGNode,
-    executor: MockExecutor,
+    executor: Executor,
     engine: RuntimeDecisionEngine,
     state: dict[str, Any],
     model: ModelProfile,
     truncate_ratio: float = 0.5,
 ) -> dict[str, Any] | None:
-    """Simplify the task and retry with relaxed constraints.
+    """Run a simplified, cheaper version of the node.
 
-    The objective is truncated to ``truncate_ratio`` of its original length,
-    simulating reduced complexity.  The constraint's ``max_latency_ms`` is
-    also doubled to allow slower (cheaper) models to be chosen.
+    Simulation of a reduced task: the objective is truncated to
+    ``truncate_ratio`` of its length and the model is billed
+    ``truncate_ratio`` of its estimated cost and latency. A real deployment
+    would instead shorten the prompt or relax the requested output.
 
-    Returns a state-update dict on success, or ``None`` on failure.
+    The degraded run must fit in the remaining budget: degradation never
+    spends money the engine does not have.
+
+    Returns a state-update dict on success, or ``None`` on failure (or when
+    the degraded run does not fit in the budget).
     """
     from ceg.compiler.mock_executor import ExecutionError
+    from ceg.runtime.decision_engine import executor_inputs
+
+    degraded_model = model.model_copy(
+        update={
+            "estimated_cost": model.estimated_cost * truncate_ratio,
+            "estimated_latency_ms": model.estimated_latency_ms * truncate_ratio,
+        }
+    )
+    if degraded_model.estimated_cost > engine.budget_remaining:
+        return None
 
     truncated_objective = node.objective[
         : max(1, int(len(node.objective) * truncate_ratio))
@@ -232,18 +266,18 @@ def apply_degradation(
         result = executor.execute(
             node_id=node.id,
             objective=truncated_objective,
-            inputs=state.get("node_outputs", {}),
+            inputs=executor_inputs(state),
+            model=degraded_model,
         )
-        engine.spend(result.cost)
-        output = (
-            dict(result.output) if isinstance(result.output, dict) else result.output
-        )
-        if isinstance(output, dict):
-            output["degraded"] = True
-            output["original_objective"] = node.objective
-        return _make_success_update(node.id, result, model.name, extra_output=output)
-    except ExecutionError:
+    except ExecutionError as exc:
+        logger.warning("Degradation failed for node '%s': %s", node.id, exc)
         return None
+    engine.spend(result.cost)
+    output = dict(result.output) if isinstance(result.output, dict) else result.output
+    if isinstance(output, dict):
+        output["degraded"] = True
+        output["original_objective"] = node.objective
+    return _make_success_update(node.id, result, model.name, extra_output=output)
 
 
 def apply_skip(node: CEGNode) -> dict[str, Any]:
@@ -271,9 +305,15 @@ def apply_skip(node: CEGNode) -> dict[str, Any]:
     }
 
 
-def apply_abort(node: CEGNode, reason: str) -> None:
+def apply_abort(
+    node: CEGNode,
+    reason: str,
+    fallbacks_triggered: list[str] | None = None,
+) -> None:
     """Halt graph execution immediately by raising ``NodeAbortError``."""
-    raise NodeAbortError(node_id=node.id, reason=reason)
+    raise NodeAbortError(
+        node_id=node.id, reason=reason, fallbacks_triggered=fallbacks_triggered
+    )
 
 
 # ── Orchestrator ──────────────────────────────────────────────────────────────
@@ -305,7 +345,7 @@ class FallbackOrchestrator:
     def run(
         self,
         node: CEGNode,
-        executor: MockExecutor,
+        executor: Executor,
         state: dict[str, Any],
         model: ModelProfile,
         error: Exception,
@@ -314,7 +354,7 @@ class FallbackOrchestrator:
 
         Args:
             node: The CEGNode that failed.
-            executor: The MockExecutor instance.
+            executor: The executor running the node.
             state: Current LangGraph shared state.
             model: The model that was selected when the failure occurred.
             error: The original exception.
@@ -325,7 +365,12 @@ class FallbackOrchestrator:
         Raises:
             NodeAbortError: If ABORT is reached or the chain is fully exhausted.
         """
+        logger.warning("Node '%s' failed, starting fallback chain: %s", node.id, error)
+        tried: list[str] = []
         for policy in self.config.escalation_chain:
+            tried.append(policy.value)
+            result: dict[str, Any] | None = None
+
             if policy == FallbackPolicy.RETRY:
                 result = apply_retry(
                     node=node,
@@ -334,11 +379,8 @@ class FallbackOrchestrator:
                     state=state,
                     model=model,
                     max_retries=self.config.max_retries,
-                    attempt=0,
+                    attempt=1,
                 )
-                if result is not None:
-                    return result
-
             elif policy == FallbackPolicy.ESCALATION:
                 result = apply_escalation(
                     node=node,
@@ -348,9 +390,6 @@ class FallbackOrchestrator:
                     current_model=model,
                     weights=self.weights,
                 )
-                if result is not None:
-                    return result
-
             elif policy == FallbackPolicy.DEGRADATION:
                 result = apply_degradation(
                     node=node,
@@ -359,17 +398,19 @@ class FallbackOrchestrator:
                     state=state,
                     model=model,
                 )
-                if result is not None:
-                    return result
-
             elif policy == FallbackPolicy.SKIP:
-                return apply_skip(node)
-
+                result = apply_skip(node)
             elif policy == FallbackPolicy.ABORT:
-                apply_abort(node, reason=str(error))
+                apply_abort(node, reason=str(error), fallbacks_triggered=tried)
+
+            if result is not None:
+                for entry in result["execution_log"]:
+                    entry["fallbacks_triggered"] = list(tried)
+                    entry["error"] = str(error)
+                return result
 
         # Chain fully exhausted without success → implicit abort
-        raise FallbackExhaustedError(node.id)
+        raise FallbackExhaustedError(node.id, fallbacks_triggered=tried)
 
 
 # ── Private helpers ───────────────────────────────────────────────────────────

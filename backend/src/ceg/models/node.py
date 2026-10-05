@@ -1,11 +1,16 @@
 """CEGNode model definition for nodes in the Cognitive Execution Graph."""
 
+from __future__ import annotations
+
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
 from ceg.models.task import CognitiveTask
+
+if TYPE_CHECKING:
+    from ceg.models.graph import CEGGraph
 
 
 class NodeStatus(str, Enum):
@@ -103,9 +108,12 @@ class CEGNode(BaseModel):
         default_factory=list,
         description="Capabilities required to execute this node.",
     )
-    model_tier_hint: ModelTierHint | str | None = Field(
+    model_tier_hint: ModelTierHint | None = Field(
         default=None,
-        description="Hint for model selection tier (fast/balanced/quality).",
+        description=(
+            "Preferred model tier (fast/balanced/quality). Plain strings are "
+            "accepted and validated against ModelTierHint."
+        ),
     )
     task: CognitiveTask | None = Field(
         default=None,
@@ -125,7 +133,7 @@ class CEGNode(BaseModel):
             "allowing human review of the output. Requires a checkpointer."
         ),
     )
-    subgraph: Any | None = Field(
+    subgraph: CEGGraph | None = Field(
         default=None,
         description=(
             "Optional nested CEGGraph subgraph encapsulated within this node. "

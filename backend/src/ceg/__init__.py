@@ -3,6 +3,16 @@
 from ceg.compiler.compiler import CEGCompiler, CompiledWorkflow
 from ceg.compiler.mock_executor import ExecutionError, ExecutionResult, MockExecutor
 from ceg.compiler.state import CEGState
+from ceg.evaluation.engine import EvaluationEngine
+from ceg.evaluation.judge import JudgeClient, MockJudgeClient
+from ceg.evaluation.models import (
+    Criterion,
+    CriterionScore,
+    EvaluationReport,
+    JudgeVerdict,
+    NodeEvaluation,
+    RobustnessReport,
+)
 from ceg.models.graph import CEGEdge, CEGGraph, CognitiveExecutionGraph, EdgeType
 from ceg.models.node import (
     CEGNode,
@@ -26,16 +36,6 @@ from ceg.runtime.fallback import (
     FallbackPolicy,
     NodeAbortError,
     NodeSkippedError,
-)
-from ceg.evaluation.engine import EvaluationEngine
-from ceg.evaluation.judge import JudgeClient, MockJudgeClient
-from ceg.evaluation.models import (
-    Criterion,
-    CriterionScore,
-    EvaluationReport,
-    JudgeVerdict,
-    NodeEvaluation,
-    RobustnessReport,
 )
 
 __version__ = "0.5.0"

@@ -13,25 +13,23 @@ Covers:
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from ceg.evaluation.engine import DEFAULT_WEIGHTS, EvaluationEngine, _clip
+from ceg.evaluation.engine import EvaluationEngine, _clip
 from ceg.evaluation.judge import JudgeClient, MockJudgeClient
 from ceg.evaluation.models import (
     Criterion,
     CriterionScore,
     EvaluationReport,
     JudgeVerdict,
-    NodeEvaluation,
     RobustnessReport,
 )
 from ceg.use_cases.sales_criteria import (
-    ALL_SALES_CRITERIA,
     ALERT_GENERATION_CRITERIA,
+    ALL_SALES_CRITERIA,
     ANOMALY_DETECTION_CRITERIA,
 )
 
@@ -153,8 +151,9 @@ class TestEvaluationReportModel:
     def test_defaults_are_sane(self):
         report = EvaluationReport()
         assert report.scenario_name == "unnamed"
-        assert report.quality_score == 0.0
-        assert report.robustness_score == 1.0
+        # Nothing measured yet: quality and robustness are None, not invented.
+        assert report.quality_score is None
+        assert report.robustness_score is None
         assert report.composite_score == 0.0
         assert report.weights == {"wc": 0.25, "wl": 0.25, "wq": 0.25, "wr": 0.25}
 
@@ -256,8 +255,12 @@ class TestMockJudgeClient:
             fixed_scores={"high": 0.9, "low": 0.5},
         )
         criteria = [
-            Criterion(name="high", description="h", weight=0.6, evaluation_prompt_template="t"),
-            Criterion(name="low", description="l", weight=0.4, evaluation_prompt_template="t"),
+            Criterion(
+                name="high", description="h", weight=0.6, evaluation_prompt_template="t"
+            ),
+            Criterion(
+                name="low", description="l", weight=0.4, evaluation_prompt_template="t"
+            ),
         ]
         verdict = client.evaluate("n", {}, criteria)
         expected = (0.9 * 0.6 + 0.5 * 0.4) / (0.6 + 0.4)
@@ -330,21 +333,21 @@ class TestMeasureLatency:
 
 
 class TestMeasureQuality:
-    def test_returns_zero_when_no_criteria(self):
+    def test_returns_none_when_no_criteria(self):
         engine = EvaluationEngine(judge=MockJudgeClient(), criteria=[])
         state = _make_minimal_state()
         score, verdicts = engine.measure_quality(state)
-        assert score == 0.0
+        assert score is None
         assert verdicts == []
 
-    def test_returns_zero_when_no_completed_nodes(self):
+    def test_returns_none_when_no_completed_nodes(self):
         engine = EvaluationEngine(
             judge=MockJudgeClient(),
             criteria=[_make_criterion()],
         )
         state = _make_minimal_state(status="skipped")
         score, verdicts = engine.measure_quality(state)
-        assert score == 0.0
+        assert score is None
 
     def test_single_criterion_score_equals_mock_default(self):
         engine = EvaluationEngine(
@@ -371,10 +374,22 @@ class TestMeasureQuality:
             "node_outputs": {"n1": {"a": 1}, "n2": {"b": 2}},
             "node_statuses": {"n1": "completed", "n2": "completed"},
             "execution_log": [
-                {"node_id": "n1", "status": "completed", "output": {"a": 1},
-                 "cost": 0.005, "latency_ms": 50.0, "confidence": 0.9},
-                {"node_id": "n2", "status": "completed", "output": {"b": 2},
-                 "cost": 0.005, "latency_ms": 50.0, "confidence": 0.9},
+                {
+                    "node_id": "n1",
+                    "status": "completed",
+                    "output": {"a": 1},
+                    "cost": 0.005,
+                    "latency_ms": 50.0,
+                    "confidence": 0.9,
+                },
+                {
+                    "node_id": "n2",
+                    "status": "completed",
+                    "output": {"b": 2},
+                    "cost": 0.005,
+                    "latency_ms": 50.0,
+                    "confidence": 0.9,
+                },
             ],
         }
         score, verdicts = engine.measure_quality(state)
@@ -394,8 +409,22 @@ class TestMeasureQuality:
             "node_outputs": {"n1": {"x": 1}, "n2": {"y": 2}},
             "node_statuses": {"n1": "completed", "n2": "completed"},
             "execution_log": [
-                {"node_id": "n1", "status": "completed", "output": {}, "cost": 0, "latency_ms": 0, "confidence": 0.9},
-                {"node_id": "n2", "status": "completed", "output": {}, "cost": 0, "latency_ms": 0, "confidence": 0.9},
+                {
+                    "node_id": "n1",
+                    "status": "completed",
+                    "output": {},
+                    "cost": 0,
+                    "latency_ms": 0,
+                    "confidence": 0.9,
+                },
+                {
+                    "node_id": "n2",
+                    "status": "completed",
+                    "output": {},
+                    "cost": 0,
+                    "latency_ms": 0,
+                    "confidence": 0.9,
+                },
             ],
         }
         score, verdicts = engine.measure_quality(state)
@@ -411,20 +440,25 @@ class TestMeasureQuality:
 
 class TestComputeCompositeScore:
     """Verify the exact formula from section 7.5.2:
-       score = wc*(1-cost/budget) + wl*(1-latency/max_lat) + wq*quality + wr*robustness
+    score = wc*(1-cost/budget) + wl*(1-latency/max_lat) + wq*quality + wr*robustness
     """
 
     def _expected(
         self,
-        cost: float, budget: float,
-        latency: float, max_lat: float,
+        cost: float,
+        budget: float,
+        latency: float,
+        max_lat: float,
         quality: float,
         robustness: float,
-        wc: float = 0.25, wl: float = 0.25,
-        wq: float = 0.25, wr: float = 0.25,
+        wc: float = 0.25,
+        wl: float = 0.25,
+        wq: float = 0.25,
+        wr: float = 0.25,
     ) -> float:
         def clip(v: float) -> float:
             return max(0.0, min(1.0, v))
+
         return (
             wc * clip(1 - cost / budget)
             + wl * clip(1 - latency / max_lat)
@@ -447,9 +481,9 @@ class TestComputeCompositeScore:
 
     def test_known_values_by_hand(self):
         """Manually computed: cost=0.10, budget=0.50 → cost_term=0.80
-           latency=3s, max=15s → latency_term=0.80
-           quality=0.85, robustness=0.90 → all weights=0.25
-           expected = 0.25*(0.80+0.80+0.85+0.90) = 0.25*3.35 = 0.8375
+        latency=3s, max=15s → latency_term=0.80
+        quality=0.85, robustness=0.90 → all weights=0.25
+        expected = 0.25*(0.80+0.80+0.85+0.90) = 0.25*3.35 = 0.8375
         """
         engine = EvaluationEngine()
         score = engine.compute_composite_score(
@@ -468,7 +502,7 @@ class TestComputeCompositeScore:
         """Cost > max_budget → cost_term clipped to 0, not negative."""
         engine = EvaluationEngine()
         score = engine.compute_composite_score(
-            cost_usd=1.0,       # 2× over budget
+            cost_usd=1.0,  # 2× over budget
             latency_seconds=0.0,
             quality_score=1.0,
             robustness_score=1.0,
@@ -484,7 +518,7 @@ class TestComputeCompositeScore:
         engine = EvaluationEngine()
         score = engine.compute_composite_score(
             cost_usd=0.0,
-            latency_seconds=30.0,   # 2× over max
+            latency_seconds=30.0,  # 2× over max
             quality_score=1.0,
             robustness_score=1.0,
             max_budget_usd=0.50,
@@ -498,8 +532,10 @@ class TestComputeCompositeScore:
         """Custom weights: wq=1.0, others=0 → score equals quality_score."""
         engine = EvaluationEngine(weights={"wc": 0.0, "wl": 0.0, "wq": 1.0, "wr": 0.0})
         score = engine.compute_composite_score(
-            cost_usd=0.5, latency_seconds=15.0,
-            quality_score=0.72, robustness_score=0.50,
+            cost_usd=0.5,
+            latency_seconds=15.0,
+            quality_score=0.72,
+            robustness_score=0.50,
             weights={"wc": 0.0, "wl": 0.0, "wq": 1.0, "wr": 0.0},
         )
         assert score == pytest.approx(0.72)
@@ -510,7 +546,9 @@ class TestComputeCompositeScore:
         for cost in [0.0, 0.25, 1.0, 10.0]:
             for latency in [0.0, 7.5, 15.0, 100.0]:
                 score = engine.compute_composite_score(cost, latency, 0.5, 0.5)
-                assert 0.0 <= score <= 1.0, f"score={score} for cost={cost}, lat={latency}"
+                assert 0.0 <= score <= 1.0, (
+                    f"score={score} for cost={cost}, lat={latency}"
+                )
 
     def test_weights_must_sum_to_one(self):
         with pytest.raises(ValueError, match="sum to 1.0"):
@@ -568,6 +606,7 @@ class TestEvaluateFullReport:
         engine = EvaluationEngine(judge=MockJudgeClient(), criteria=ALL_SALES_CRITERIA)
         state = _run_pipeline("scenario_b_single_anomaly.csv")
         report = engine.evaluate(state)
+        assert report.quality_score is not None
         assert 0.0 <= report.quality_score <= 1.0
 
     def test_composite_score_in_range(self):
@@ -600,21 +639,47 @@ class TestEvaluateFullReport:
         assert skipped[0].node_id == "generate_alert"
         assert skipped[0].judge_verdict is None
 
-    def test_completed_nodes_have_judge_verdicts_scenario_b(self):
-        """In scenario B, all completed nodes receive a judge verdict."""
+    def test_only_targeted_nodes_have_judge_verdicts_scenario_b(self):
+        """Each sales criterion targets one node: only those nodes are judged."""
         engine = EvaluationEngine(judge=MockJudgeClient(), criteria=ALL_SALES_CRITERIA)
         state = _run_pipeline("scenario_b_single_anomaly.csv")
         report = engine.evaluate(state)
-        completed = [ne for ne in report.node_evaluations if ne.status == "completed"]
-        for ne in completed:
-            assert ne.judge_verdict is not None
+        judged = {
+            ne.node_id: ne.judge_verdict
+            for ne in report.node_evaluations
+            if ne.status == "completed"
+        }
+        assert judged["detect_anomaly"] is not None
+        assert judged["generate_alert"] is not None
+        assert judged["fetch_data"] is None
+        criteria_seen = {
+            cs.criterion_name for cs in judged["detect_anomaly"].criteria_scores
+        }
+        assert criteria_seen == {
+            "anomaly_precision",
+            "anomaly_completeness",
+            "threshold_accuracy",
+        }
 
-    def test_robustness_defaults_to_one(self):
-        """Single-run evaluate() passes robustness_score=1.0 by default."""
+    def test_robustness_unmeasured_by_default(self):
+        """A single run says nothing about robustness: it stays None."""
         engine = EvaluationEngine()
         state = _make_minimal_state()
         report = engine.evaluate(state)
-        assert report.robustness_score == 1.0
+        assert report.robustness_score is None
+        assert "robustness" in report.metadata["unmeasured"]
+
+    def test_composite_rescales_weights_without_robustness(self):
+        """An unmeasured robustness is left out, not counted as 1.0."""
+        engine = EvaluationEngine()
+        with_unmeasured = engine.compute_composite_score(
+            cost_usd=0.0,
+            latency_seconds=0.0,
+            quality_score=0.4,
+            robustness_score=None,
+        )
+        # (0.25*1 + 0.25*1 + 0.25*0.4) / 0.75
+        assert with_unmeasured == pytest.approx(0.6 / 0.75)
 
     def test_robustness_injected(self):
         engine = EvaluationEngine()
@@ -623,7 +688,7 @@ class TestEvaluateFullReport:
         assert report.robustness_score == pytest.approx(0.80)
 
     def test_composite_formula_verified_scenario_b(self):
-        """Verify composite = wc*(1-c/B) + wl*(1-l/L) + wq*q + wr*r with known values."""
+        """Verify composite = wc*(1-c/B) + wl*(1-l/L) + wq*q + wr*r (known values)."""
         engine = EvaluationEngine(
             judge=MockJudgeClient(default_score=0.90),
             criteria=[_make_criterion("c1", weight=1.0)],
@@ -638,6 +703,7 @@ class TestEvaluateFullReport:
         # Recompute expected from raw values
         cost_term = _clip(1.0 - report.total_cost_usd / 0.50)
         latency_term = _clip(1.0 - report.total_latency_seconds / 15.0)
+        assert report.quality_score is not None
         quality_term = _clip(report.quality_score)
         robustness_term = _clip(0.95)
         expected = 0.25 * (cost_term + latency_term + quality_term + robustness_term)
@@ -650,8 +716,9 @@ class TestEvaluateFullReport:
 
 
 class TestMeasureRobustness:
-    def _scenario_a_factories(self):
+    def _scenario_a_factories(self) -> tuple[Any, Any]:
         from ceg.use_cases.sales_pipeline import SalesExecutor, build_sales_graph
+
         csv = str(FIXTURES_DIR / "scenario_a_normal.csv")
         return build_sales_graph, lambda: SalesExecutor(csv_path=csv)
 
@@ -684,18 +751,23 @@ class TestMeasureRobustness:
     def test_mean_cost_positive(self):
         build_fn, executor_factory = self._scenario_a_factories()
         engine = EvaluationEngine()
-        report = engine.measure_robustness(build_fn=build_fn, executor_factory=executor_factory, n_runs=3)
+        report = engine.measure_robustness(
+            build_fn=build_fn, executor_factory=executor_factory, n_runs=3
+        )
         assert report.mean_cost_usd > 0.0
 
     def test_mean_latency_positive(self):
         build_fn, executor_factory = self._scenario_a_factories()
         engine = EvaluationEngine()
-        report = engine.measure_robustness(build_fn=build_fn, executor_factory=executor_factory, n_runs=3)
+        report = engine.measure_robustness(
+            build_fn=build_fn, executor_factory=executor_factory, n_runs=3
+        )
         assert report.mean_latency_ms > 0.0
 
     def test_forced_failures_reduce_success_rate(self):
         """Corrupted CSV → all runs abort → success_rate = 0.0."""
         from ceg.use_cases.sales_pipeline import SalesExecutor, build_sales_graph
+
         csv = str(FIXTURES_DIR / "scenario_d_corrupted.csv")
         engine = EvaluationEngine()
         report = engine.measure_robustness(
@@ -711,6 +783,7 @@ class TestMeasureRobustness:
 
     def test_failure_reasons_non_empty_on_corrupted(self):
         from ceg.use_cases.sales_pipeline import SalesExecutor, build_sales_graph
+
         csv = str(FIXTURES_DIR / "scenario_d_corrupted.csv")
         engine = EvaluationEngine()
         report = engine.measure_robustness(
@@ -724,13 +797,14 @@ class TestMeasureRobustness:
     def test_run_results_length(self):
         build_fn, executor_factory = self._scenario_a_factories()
         engine = EvaluationEngine()
-        report = engine.measure_robustness(build_fn=build_fn, executor_factory=executor_factory, n_runs=4)
+        report = engine.measure_robustness(
+            build_fn=build_fn, executor_factory=executor_factory, n_runs=4
+        )
         assert len(report.run_results) == 4
 
     def test_partial_failure_rate(self):
         """Mix of success (scenario_a) and failure: use a flaky executor."""
         from ceg.use_cases.sales_pipeline import SalesExecutor, build_sales_graph
-        from ceg.compiler.mock_executor import ExecutionError
 
         call_count = {"n": 0}
         csv_ok = str(FIXTURES_DIR / "scenario_a_normal.csv")
@@ -739,7 +813,9 @@ class TestMeasureRobustness:
         def flaky_factory() -> SalesExecutor:
             call_count["n"] += 1
             # Alternate: odd runs use good CSV, even runs use corrupted CSV
-            return SalesExecutor(csv_path=csv_ok if call_count["n"] % 2 == 1 else csv_bad)
+            return SalesExecutor(
+                csv_path=csv_ok if call_count["n"] % 2 == 1 else csv_bad
+            )
 
         engine = EvaluationEngine()
         report = engine.measure_robustness(
@@ -792,7 +868,9 @@ class TestSalesCriteria:
 
     def test_judge_produces_verdict_for_all_criteria(self):
         client = MockJudgeClient(default_score=0.88)
-        verdict = client.evaluate("detect_anomaly", {"anomalies_found": True}, ALL_SALES_CRITERIA)
+        verdict = client.evaluate(
+            "detect_anomaly", {"anomalies_found": True}, ALL_SALES_CRITERIA
+        )
         assert len(verdict.criteria_scores) == len(ALL_SALES_CRITERIA)
 
 
@@ -835,6 +913,7 @@ class TestIntegrationScenariosAB:
         )
         assert report.total_cost_usd > 0
         assert report.total_latency_ms > 0
+        assert report.quality_score is not None
         assert report.quality_score > 0
         assert report.composite_score > 0
 
@@ -843,6 +922,7 @@ class TestIntegrationScenariosAB:
         engine = self._engine()
         state = _run_pipeline("scenario_b_single_anomaly.csv")
         report = engine.evaluate(state)
+        assert report.quality_score is not None
         assert report.quality_score > 0.0
 
     def test_scenario_a_skipped_node_zero_cost(self):
@@ -850,12 +930,15 @@ class TestIntegrationScenariosAB:
         engine = self._engine()
         state = _run_pipeline("scenario_a_normal.csv")
         report = engine.evaluate(state)
-        skipped = next(ne for ne in report.node_evaluations if ne.node_id == "generate_alert")
+        skipped = next(
+            ne for ne in report.node_evaluations if ne.node_id == "generate_alert"
+        )
         assert skipped.cost_usd == 0.0
 
     def test_robustness_scenario_a_then_integrate(self):
         """Full S5 flow: run robustness check then inject score into evaluate."""
         from ceg.use_cases.sales_pipeline import SalesExecutor, build_sales_graph
+
         csv = str(FIXTURES_DIR / "scenario_a_normal.csv")
         engine = self._engine()
 
@@ -879,6 +962,7 @@ class TestIntegrationScenariosAB:
     def test_scenario_d_robustness_is_zero(self):
         """Corrupted data → 0% success rate → low composite when injected."""
         from ceg.use_cases.sales_pipeline import SalesExecutor, build_sales_graph
+
         csv_bad = str(FIXTURES_DIR / "scenario_d_corrupted.csv")
         engine = EvaluationEngine(judge=MockJudgeClient(), criteria=[])
 

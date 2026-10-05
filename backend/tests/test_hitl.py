@@ -6,17 +6,16 @@ Validates that:
 3. Rejection marks the node as `skipped` and continues the graph cleanly.
 4. Nodes with `interrupt_after=True` pause execution after running for review.
 5. Review can modify the output before downstream nodes consume it.
-6. When no checkpointer is provided, interrupt flags are safely ignored.
+6. Without a checkpointer, compiling a HITL graph fails unless the caller
+   explicitly opts out with ``ignore_interrupts=True``.
 """
 
 import pytest
 from langgraph.checkpoint.memory import MemorySaver
 
 from ceg.compiler.compiler import CEGCompiler
-from ceg.compiler.mock_executor import MockExecutor
-from ceg.models.graph import CEGEdge, CEGGraph, EdgeType
+from ceg.models.graph import CEGEdge, CEGGraph
 from ceg.models.node import CEGNode
-
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -82,7 +81,10 @@ class TestHITLInterruptBefore:
         # Node A completed
         assert state["node_statuses"]["A"] == "completed"
         # Node B has not completed yet
-        assert "B" not in state["node_statuses"] or state["node_statuses"].get("B") != "completed"
+        assert (
+            "B" not in state["node_statuses"]
+            or state["node_statuses"].get("B") != "completed"
+        )
 
     def test_workflow_resumes_with_approval(self):
         """Workflow resumes and executes node B when human approves."""
@@ -176,14 +178,34 @@ class TestHITLInterruptAfter:
         assert final_state["node_statuses"]["C"] == "completed"
 
 
-class TestHITLBackwardCompatibility:
-    """Tests that HITL flags work gracefully without checkpointer."""
+class TestHITLWithoutCheckpointer:
+    """An approval step must never be skipped silently."""
 
-    def test_no_checkpointer_ignores_interrupts_safely(self):
-        """When compiled without checkpointer, nodes execute without interruption."""
+    def test_compile_without_checkpointer_is_refused(self):
+        """A HITL graph without checkpointer does not compile."""
+        with pytest.raises(ValueError, match="require human approval"):
+            CEGCompiler().compile(_hitl_before_graph())
+
+    def test_inner_subgraph_hitl_without_checkpointer_is_refused(self):
+        """The check also covers interrupt nodes nested in a subgraph."""
+        outer = CEGGraph(
+            nodes=[CEGNode(id="team", objective="Team", subgraph=_hitl_before_graph())]
+        )
+        with pytest.raises(ValueError, match="require human approval"):
+            CEGCompiler().compile(outer)
+
+    def test_invoke_with_checkpointer_requires_thread_id(self):
+        """A checkpointed run without thread_id could never be resumed."""
+        workflow = CEGCompiler().compile(
+            _hitl_before_graph(), checkpointer=MemorySaver()
+        )
+        with pytest.raises(ValueError, match="thread_id"):
+            workflow.invoke()
+
+    def test_explicit_opt_out_runs_unattended(self):
+        """ignore_interrupts=True runs every node without interruption."""
         compiler = CEGCompiler()
-        # Compile without checkpointer
-        workflow = compiler.compile(_hitl_before_graph())
+        workflow = compiler.compile(_hitl_before_graph(), ignore_interrupts=True)
         result = workflow.invoke()
 
         # All nodes complete immediately in one shot
@@ -192,14 +214,14 @@ class TestHITLBackwardCompatibility:
         assert result["node_statuses"]["C"] == "completed"
 
     def test_resume_without_checkpointer_raises_error(self):
-        """Calling resume() on a workflow compiled without checkpointer raises RuntimeError."""
+        """resume() without a checkpointer raises RuntimeError."""
         compiler = CEGCompiler()
-        workflow = compiler.compile(_hitl_before_graph())
+        workflow = compiler.compile(_hitl_before_graph(), ignore_interrupts=True)
         with pytest.raises(RuntimeError, match="no checkpointer configured"):
             workflow.resume("thread-1")
 
     def test_metadata_has_hitl_flag(self):
         """Compilation metadata indicates HITL nodes are present."""
         compiler = CEGCompiler()
-        workflow = compiler.compile(_hitl_before_graph())
+        workflow = compiler.compile(_hitl_before_graph(), checkpointer=MemorySaver())
         assert workflow.metadata["has_hitl"] is True

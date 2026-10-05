@@ -49,7 +49,7 @@ def test_reject_self_loop_cycle() -> None:
 
     with pytest.raises(ValidationError) as exc_info:
         CEGGraph(nodes=[node_a])
-    assert "Graph contains at least one cycle" in str(exc_info.value)
+    assert "Graph contains a cycle" in str(exc_info.value)
 
 
 def test_reject_two_node_cycle() -> None:
@@ -59,7 +59,7 @@ def test_reject_two_node_cycle() -> None:
 
     with pytest.raises(ValidationError) as exc_info:
         CEGGraph(nodes=[node_a, node_b])
-    assert "Graph contains at least one cycle" in str(exc_info.value)
+    assert "Graph contains a cycle" in str(exc_info.value)
 
 
 def test_reject_three_node_cycle_via_edges() -> None:
@@ -73,7 +73,7 @@ def test_reject_three_node_cycle_via_edges() -> None:
             nodes=[node_a, node_b, node_c],
             edges=[("A", "B"), ("B", "C"), ("C", "A")],  # type: ignore[list-item]
         )
-    assert "Graph contains at least one cycle" in str(exc_info.value)
+    assert "Graph contains a cycle" in str(exc_info.value)
 
 
 def test_reject_non_existent_dependency() -> None:

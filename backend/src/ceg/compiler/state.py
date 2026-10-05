@@ -19,6 +19,7 @@ class CEGState(TypedDict):
 
     Uses LangGraph Annotated reducers to handle incremental state updates
     from each node execution:
+    - inputs: graph inputs given to ``invoke()`` (e.g. a CSV path)
     - node_outputs / node_statuses: merged via dict update
     - total_cost / total_latency_ms: accumulated via addition
     - execution_log: appended via list concatenation
@@ -26,6 +27,7 @@ class CEGState(TypedDict):
     - human_approvals: records human decisions for HITL nodes
     """
 
+    inputs: Annotated[dict[str, Any], _merge_dicts]
     node_outputs: Annotated[dict[str, Any], _merge_dicts]
     node_statuses: Annotated[dict[str, str], _merge_dicts]
     total_cost: Annotated[float, operator.add]
@@ -33,4 +35,3 @@ class CEGState(TypedDict):
     execution_log: Annotated[list[dict[str, Any]], operator.add]
     loop_counts: Annotated[dict[str, int], _merge_dicts]
     human_approvals: Annotated[dict[str, Any], _merge_dicts]
-

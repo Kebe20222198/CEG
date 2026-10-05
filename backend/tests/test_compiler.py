@@ -1,5 +1,7 @@
 """Tests for CEG Compiler v1 — validation, sort, translation, end-to-end."""
 
+from typing import Any
+
 import pytest
 from pydantic import ValidationError
 
@@ -274,46 +276,6 @@ class TestTopologicalSort:
 
 
 # ══════════════════════════════════════════════════════════════════════
-# Translation tests
-# ══════════════════════════════════════════════════════════════════════
-
-
-class TestTranslation:
-    """Tests for CEGCompiler._translate."""
-
-    def test_translate_produces_compilable_graph(self):
-        """_translate returns a StateGraph that can be compiled without error."""
-        compiler = CEGCompiler()
-        graph = _linear_graph(3)
-        order = compiler._topological_sort(graph)
-        state_graph = compiler._translate(graph, order)
-
-        # Should compile without error
-        compiled = state_graph.compile()
-        assert compiled is not None
-
-    def test_translate_respects_node_count(self):
-        """The translated StateGraph contains the correct number of nodes."""
-        compiler = CEGCompiler()
-        graph = _linear_graph(4)
-        order = compiler._topological_sort(graph)
-        state_graph = compiler._translate(graph, order)
-
-        compiled = state_graph.compile()
-        # Verify by invoking — if node count is wrong, execution would fail
-        result = compiled.invoke(
-            {
-                "node_outputs": {},
-                "node_statuses": {},
-                "total_cost": 0.0,
-                "total_latency_ms": 0.0,
-                "execution_log": [],
-            }
-        )
-        assert len(result["node_statuses"]) == 4
-
-
-# ══════════════════════════════════════════════════════════════════════
 # CompiledWorkflow tests
 # ══════════════════════════════════════════════════════════════════════
 
@@ -506,17 +468,17 @@ class TestEdgeCases:
 class _FixedOutputExecutor(MockExecutor):
     """Executor returning the same payload for every node."""
 
-    def __init__(self, payload: dict) -> None:
+    def __init__(self, payload: dict[str, Any]) -> None:
         super().__init__()
         self.payload = payload
 
-    def execute(self, node_id, objective, inputs, attempt=1):
+    def run(self, node_id, objective, inputs, attempt=1):
         return ExecutionResult(
             output=dict(self.payload), cost=0.001, latency_ms=10.0, confidence=1.0
         )
 
 
-def _run(graph: CEGGraph, payload: dict) -> dict:
+def _run(graph: CEGGraph, payload: dict[str, Any]) -> dict[str, Any]:
     executor = _FixedOutputExecutor(payload)
     return CEGCompiler(executor=executor).compile(graph).invoke()
 

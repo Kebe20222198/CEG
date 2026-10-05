@@ -1,7 +1,8 @@
 """Sales pipeline executor functions — pure Python business logic, no LLM.
 
 Each function follows the contract:
-    execute_<name>(node_id: str, objective: str, inputs: dict[str, Any]) -> ExecutionResult
+    execute_<name>(node_id: str, objective: str, inputs: dict[str, Any])
+        -> ExecutionResult
 
 Raises ExecutionError on business-logic failures.
 """
@@ -51,28 +52,29 @@ def execute_fetch_data(
             # Validate montant
             try:
                 montant = float(row["montant"])
-            except (ValueError, KeyError):
+            except (ValueError, KeyError) as exc:
                 raise ExecutionError(
                     node_id, f"Données invalides ligne {i}: montant non numérique"
-                )
+                ) from exc
 
             # Validate quantite
             try:
                 quantite = int(row["quantite"])
-            except (ValueError, KeyError):
+            except (ValueError, KeyError) as exc:
                 raise ExecutionError(
                     node_id, f"Données invalides ligne {i}: quantite non entière"
-                )
+                ) from exc
 
             # Validate date format YYYY-MM-DD
             date_str = row["date"]
             try:
                 datetime.strptime(date_str, "%Y-%m-%d")
-            except ValueError:
+            except ValueError as exc:
                 raise ExecutionError(
                     node_id,
-                    f"Données invalides ligne {i}: date '{date_str}' hors format YYYY-MM-DD",
-                )
+                    f"Données invalides ligne {i}: date '{date_str}' "
+                    "hors format YYYY-MM-DD",
+                ) from exc
 
             rows.append(
                 {

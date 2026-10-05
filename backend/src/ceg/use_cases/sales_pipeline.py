@@ -12,7 +12,8 @@ Run avec : python -m ceg.use_cases.sales_pipeline
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 from ceg.compiler.compiler import CEGCompiler
 from ceg.compiler.mock_executor import ExecutionError, ExecutionResult, MockExecutor
@@ -20,20 +21,25 @@ from ceg.models.graph import CEGEdge, CEGGraph, EdgeType
 from ceg.models.node import CEGNode, ModelTierHint
 from ceg.models.task import CognitiveTask, SubTask, TaskConstraint
 
-
 # ── Minimal SDK decorator ─────────────────────────────────────────────────────
+
+
+_TaskFn = TypeVar("_TaskFn", bound=Callable[..., Any])
+
 
 class _CEGRegistry:
     """Minimal task registry supporting the @ceg.task() decorator pattern."""
 
     def __init__(self) -> None:
-        self._tasks: dict[str, Any] = {}
+        self._tasks: dict[str, Callable[..., Any]] = {}
 
-    def task(self) -> Any:
+    def task(self) -> Callable[[_TaskFn], _TaskFn]:
         """Decorator that registers the decorated function as a CEG task."""
-        def decorator(fn: Any) -> Any:
+
+        def decorator(fn: _TaskFn) -> _TaskFn:
             self._tasks[fn.__name__] = fn
             return fn
+
         return decorator
 
 
@@ -41,6 +47,7 @@ ceg = _CEGRegistry()
 
 
 # ── SalesExecutor ─────────────────────────────────────────────────────────────
+
 
 class SalesExecutor(MockExecutor):
     """Executor that dispatches to the real sales business logic functions.
@@ -57,7 +64,7 @@ class SalesExecutor(MockExecutor):
         super().__init__()
         self.csv_path = csv_path
 
-    def execute(
+    def run(
         self,
         node_id: str,
         objective: str,
@@ -91,6 +98,7 @@ class SalesExecutor(MockExecutor):
 
 
 # ── Task definition (SDK declarative style) ───────────────────────────────────
+
 
 @ceg.task()
 def analyse_ventes_alertes() -> CognitiveTask:
@@ -148,6 +156,7 @@ def analyse_ventes_alertes() -> CognitiveTask:
 
 # ── Graph builder ─────────────────────────────────────────────────────────────
 
+
 def build_sales_graph() -> CEGGraph:
     """Build the 5-node sales pipeline CEGGraph with a conditional edge.
 
@@ -200,9 +209,21 @@ def build_sales_graph() -> CEGGraph:
     ]
 
     edges = [
-        CEGEdge(source="fetch_data", target="aggregate_region", edge_type=EdgeType.SEQUENTIAL),
-        CEGEdge(source="aggregate_region", target="compute_trend", edge_type=EdgeType.SEQUENTIAL),
-        CEGEdge(source="compute_trend", target="detect_anomaly", edge_type=EdgeType.SEQUENTIAL),
+        CEGEdge(
+            source="fetch_data",
+            target="aggregate_region",
+            edge_type=EdgeType.SEQUENTIAL,
+        ),
+        CEGEdge(
+            source="aggregate_region",
+            target="compute_trend",
+            edge_type=EdgeType.SEQUENTIAL,
+        ),
+        CEGEdge(
+            source="compute_trend",
+            target="detect_anomaly",
+            edge_type=EdgeType.SEQUENTIAL,
+        ),
         CEGEdge(
             source="detect_anomaly",
             target="generate_alert",
@@ -221,6 +242,7 @@ def build_sales_executor(csv_path: str | None = None) -> SalesExecutor:
 
 # ── CLI entry point ───────────────────────────────────────────────────────────
 
+
 def main(csv_path: str | None = None) -> dict[str, Any]:
     """Build, compile, and execute the sales pipeline end-to-end.
 
@@ -237,7 +259,12 @@ def main(csv_path: str | None = None) -> dict[str, Any]:
         # Default to scenario_b for a demo with anomaly detection
         csv_path = os.path.join(
             os.path.dirname(__file__),
-            "..", "..", "..", "tests", "fixtures", "scenario_b_single_anomaly.csv"
+            "..",
+            "..",
+            "..",
+            "tests",
+            "fixtures",
+            "scenario_b_single_anomaly.csv",
         )
         csv_path = os.path.normpath(csv_path)
 
@@ -263,10 +290,15 @@ def main(csv_path: str | None = None) -> dict[str, Any]:
     # 4. Display
     print("\n— Résultats —\n")
     for entry in result.get("execution_log", []):
-        status_icon = "✓" if entry["status"] == "completed" else ("⏭" if entry["status"] == "skipped" else "✗")
+        status_icon = (
+            "✓"
+            if entry["status"] == "completed"
+            else ("⏭" if entry["status"] == "skipped" else "✗")
+        )
         print(
             f"  {status_icon} [{entry['node_id']}] status={entry['status']}  "
-            f"cost={entry.get('cost', 0):.4f}  latency={entry.get('latency_ms', 0):.1f}ms"
+            f"cost={entry.get('cost', 0):.4f}  "
+            f"latency={entry.get('latency_ms', 0):.1f}ms"
         )
 
     print(f"\n  Coût total    : {result.get('total_cost', 0):.4f} USD")

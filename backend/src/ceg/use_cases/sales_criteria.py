@@ -13,6 +13,7 @@ from ceg.evaluation.models import Criterion
 
 CRITERION_ANOMALY_PRECISION = Criterion(
     name="anomaly_precision",
+    target_node_ids=["detect_anomaly"],
     description=(
         "Les régions signalées comme anomalies ont bien une chute de volume "
         "supérieure au seuil de -20%. Pas de faux positifs."
@@ -29,6 +30,7 @@ CRITERION_ANOMALY_PRECISION = Criterion(
 
 CRITERION_ANOMALY_COMPLETENESS = Criterion(
     name="anomaly_completeness",
+    target_node_ids=["detect_anomaly"],
     description=(
         "Toutes les régions avec une chute > 20% ont été détectées. "
         "Pas de faux négatifs."
@@ -44,6 +46,7 @@ CRITERION_ANOMALY_COMPLETENESS = Criterion(
 
 CRITERION_THRESHOLD_ACCURACY = Criterion(
     name="threshold_accuracy",
+    target_node_ids=["detect_anomaly"],
     description="Le seuil appliqué est exactement -20.0%.",
     weight=0.30,
     evaluation_prompt_template=(
@@ -58,6 +61,7 @@ CRITERION_THRESHOLD_ACCURACY = Criterion(
 
 CRITERION_ALERT_RELEVANCE = Criterion(
     name="alert_relevance",
+    target_node_ids=["generate_alert"],
     description=(
         "L'alerte mentionne toutes les régions en anomalie avec leur "
         "pourcentage de variation."
@@ -74,6 +78,7 @@ CRITERION_ALERT_RELEVANCE = Criterion(
 
 CRITERION_ALERT_CLARITY = Criterion(
     name="alert_clarity",
+    target_node_ids=["generate_alert"],
     description="Le message d'alerte est clair, lisible et actionnable.",
     weight=0.35,
     evaluation_prompt_template=(
@@ -86,6 +91,7 @@ CRITERION_ALERT_CLARITY = Criterion(
 
 CRITERION_ALERT_ACCURACY = Criterion(
     name="alert_accuracy",
+    target_node_ids=["generate_alert"],
     description="Les pourcentages et montants dans l'alerte sont corrects.",
     weight=0.25,
     evaluation_prompt_template=(

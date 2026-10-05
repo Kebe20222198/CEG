@@ -2,12 +2,15 @@
 
 Demonstrates the CEG Compiler on realistic use cases:
   1. Sequential: fetch_data → aggregate → detect_anomaly → generate_alert
-  2. Parallel (fan-out/fan-in): {fetch_nord, fetch_sud} → aggregate → detect_anomaly → generate_alert
+  2. Parallel (fan-out/fan-in): {fetch_nord, fetch_sud} → aggregate
+     → detect_anomaly → generate_alert
 
 Run with:  python -m ceg.examples.sales_pipeline
 """
 
 from __future__ import annotations
+
+from langgraph.checkpoint.memory import MemorySaver
 
 from ceg.compiler.compiler import CEGCompiler
 from ceg.models.graph import CEGEdge, CEGGraph, EdgeType
@@ -161,17 +164,20 @@ def main() -> None:
     ceg = build_parallel_sales_pipeline()
     print(f"\n✓ Built CEG with {len(ceg.nodes)} nodes and {len(ceg.edges)} edges")
 
-    # 2. Compile
+    # 2. Compile (generate_alert needs human approval → checkpointer)
     compiler = CEGCompiler()
-    workflow = compiler.compile(ceg)
+    workflow = compiler.compile(ceg, checkpointer=MemorySaver())
     print("✓ Compiled to LangGraph workflow")
     print(f"  Execution order: {workflow.metadata['execution_order']}")
     print(f"  Has parallel:    {workflow.metadata['has_parallel']}")
     print(f"  Has HITL:        {workflow.metadata['has_hitl']}")
 
-    # 3. Execute
+    # 3. Execute: the run pauses before generate_alert
     print("\n— Executing workflow —\n")
-    result = workflow.invoke()
+    result = workflow.invoke(thread_id="demo")
+    for pending in result.get("__interrupt__", []):
+        print(f"  ⏸  {pending.value['message']} → approved (demo)")
+        result = workflow.resume("demo", value=True)
 
     # 4. Display results
     print("\n— Execution Results —\n")

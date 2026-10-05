@@ -1,7 +1,7 @@
 """Demonstration pipelines for Advanced Control Flow mechanisms in CEG.
 
 Provides:
-  1. analyse_ventes_parallele: EdgeType.PARALLEL (fan-out / fan-in multi-region fetching)
+  1. analyse_ventes_parallele: EdgeType.PARALLEL (fan-out / fan-in, multi-region)
   2. redaction_rapport_iteratif: EdgeType.LOOP (iterative critique and refinement cycle)
   3. validation_budget_hitl: Human-in-the-Loop (interrupt_before approval)
 """
@@ -13,10 +13,10 @@ from typing import Any
 from ceg.compiler.mock_executor import ExecutionError, ExecutionResult, MockExecutor
 from ceg.models.graph import CEGEdge, CEGGraph, EdgeType
 from ceg.models.node import CEGNode, ModelTierHint
-from ceg.models.task import CognitiveTask, SubTask, TaskConstraint
-
+from ceg.models.task import CognitiveTask
 
 # ── 1. Parallel Pipeline (Fan-out / Fan-in) ──────────────────────────────────
+
 
 def build_parallel_sales_graph() -> CEGGraph:
     """Build a parallel multi-region sales analysis pipeline.
@@ -88,11 +88,21 @@ def build_parallel_sales_graph() -> CEGGraph:
         CEGEdge(source="init", target="fetch_sud", edge_type=EdgeType.PARALLEL),
         CEGEdge(source="init", target="fetch_est", edge_type=EdgeType.PARALLEL),
         # Fan-in : convergence vers aggregate_multi
-        CEGEdge(source="fetch_nord", target="aggregate_multi", edge_type=EdgeType.SEQUENTIAL),
-        CEGEdge(source="fetch_sud", target="aggregate_multi", edge_type=EdgeType.SEQUENTIAL),
-        CEGEdge(source="fetch_est", target="aggregate_multi", edge_type=EdgeType.SEQUENTIAL),
+        CEGEdge(
+            source="fetch_nord", target="aggregate_multi", edge_type=EdgeType.SEQUENTIAL
+        ),
+        CEGEdge(
+            source="fetch_sud", target="aggregate_multi", edge_type=EdgeType.SEQUENTIAL
+        ),
+        CEGEdge(
+            source="fetch_est", target="aggregate_multi", edge_type=EdgeType.SEQUENTIAL
+        ),
         # Pipeline séquentiel et conditionnel
-        CEGEdge(source="aggregate_multi", target="detect_anomaly", edge_type=EdgeType.SEQUENTIAL),
+        CEGEdge(
+            source="aggregate_multi",
+            target="detect_anomaly",
+            edge_type=EdgeType.SEQUENTIAL,
+        ),
         CEGEdge(
             source="detect_anomaly",
             target="generate_alert",
@@ -107,7 +117,7 @@ def build_parallel_sales_graph() -> CEGGraph:
 class ParallelSalesExecutor(MockExecutor):
     """Executor for parallel regional sales pipeline."""
 
-    def execute(
+    def run(
         self,
         node_id: str,
         objective: str,
@@ -169,7 +179,9 @@ class ParallelSalesExecutor(MockExecutor):
         elif node_id == "generate_alert":
             return ExecutionResult(
                 output={
-                    "alert_message": "ALERTE: Baisse de 26% détectée dans la région Nord.",
+                    "alert_message": (
+                        "ALERTE: Baisse de 26% détectée dans la région Nord."
+                    ),
                     "alert_sent": True,
                 },
                 cost=0.004,
@@ -180,6 +192,7 @@ class ParallelSalesExecutor(MockExecutor):
 
 
 # ── 2. Iterative Refinement Loop Pipeline (EdgeType.LOOP) ────────────────────
+
 
 def build_loop_report_graph() -> CEGGraph:
     """Build an iterative report drafting pipeline with self-correction loop.
@@ -194,7 +207,9 @@ def build_loop_report_graph() -> CEGGraph:
         CEGNode(
             id="rediger_brouillon",
             objective="Rédiger ou réviser la synthèse stratégique trimestrielle",
-            task=CognitiveTask(objective="Rédaction du rapport avec prise en compte des critiques"),
+            task=CognitiveTask(
+                objective="Rédaction du rapport avec prise en compte des critiques"
+            ),
             model_tier_hint=ModelTierHint.QUALITY,
         ),
         CEGNode(
@@ -247,7 +262,7 @@ class LoopReportExecutor(MockExecutor):
         super().__init__()
         self._iteration = 0
 
-    def execute(
+    def run(
         self,
         node_id: str,
         objective: str,
@@ -260,7 +275,10 @@ class LoopReportExecutor(MockExecutor):
             return ExecutionResult(
                 output={
                     "iteration": self._iteration,
-                    "draft_content": f"Version {self._iteration} du rapport stratégique trimestriel (Q1 2024).",
+                    "draft_content": (
+                        f"Version {self._iteration} du rapport stratégique "
+                        "trimestriel (Q1 2024)."
+                    ),
                     "word_count": 450 + (self._iteration * 50),
                 },
                 cost=0.005,
@@ -274,7 +292,9 @@ class LoopReportExecutor(MockExecutor):
                     "quality_score": 0.72 if self._iteration == 1 else 0.94,
                     "needs_revision": not is_valid,
                     "is_approved": is_valid,
-                    "feedback": "Points d'action clarifiés et cohérence validée." if is_valid else "Manque d'exemples chiffrés sur le churn.",
+                    "feedback": "Points d'action clarifiés et cohérence validée."
+                    if is_valid
+                    else "Manque d'exemples chiffrés sur le churn.",
                 },
                 cost=0.004,
                 latency_ms=90.0,
@@ -295,6 +315,7 @@ class LoopReportExecutor(MockExecutor):
 
 
 # ── 3. Human-in-the-Loop Pipeline (HITL) ─────────────────────────────────────
+
 
 def build_hitl_budget_graph() -> CEGGraph:
     """Build a budget allocation pipeline with human approval checkpoint.
@@ -326,8 +347,16 @@ def build_hitl_budget_graph() -> CEGGraph:
     ]
 
     edges = [
-        CEGEdge(source="calculer_budget", target="validation_manager", edge_type=EdgeType.SEQUENTIAL),
-        CEGEdge(source="validation_manager", target="decaisser_fonds", edge_type=EdgeType.SEQUENTIAL),
+        CEGEdge(
+            source="calculer_budget",
+            target="validation_manager",
+            edge_type=EdgeType.SEQUENTIAL,
+        ),
+        CEGEdge(
+            source="validation_manager",
+            target="decaisser_fonds",
+            edge_type=EdgeType.SEQUENTIAL,
+        ),
     ]
 
     return CEGGraph(nodes=nodes, edges=edges)
@@ -336,7 +365,7 @@ def build_hitl_budget_graph() -> CEGGraph:
 class HITLBudgetExecutor(MockExecutor):
     """Executor for human-in-the-loop budget validation pipeline."""
 
-    def execute(
+    def run(
         self,
         node_id: str,
         objective: str,

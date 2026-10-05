@@ -1,18 +1,14 @@
-"""Tests for Subgraphs (nested CEGGraph inside CEGNode) and Hierarchical Multi-Agent Supervisor."""
+"""Tests for subgraphs (CEGGraph nested in a CEGNode) and the hierarchical team."""
 
-import pytest
 from langgraph.checkpoint.memory import MemorySaver
 
 from ceg.compiler.compiler import CEGCompiler
 from ceg.compiler.mock_executor import MockExecutor
 from ceg.models.graph import CEGEdge, CEGGraph, EdgeType
-from ceg.models.node import CEGNode, ModelTierHint
-from ceg.models.task import CognitiveTask
+from ceg.models.node import CEGNode
 from ceg.use_cases.multi_agent_supervisor import (
     HierarchicalSupervisorExecutor,
-    build_analytics_team_subgraph,
     build_hierarchical_supervisor_graph,
-    build_research_team_subgraph,
 )
 
 
@@ -56,17 +52,28 @@ class TestSubgraphCompilationAndExecution:
                 CEGNode(id="sub1", objective="Step 1"),
                 CEGNode(id="sub2", objective="Step 2", dependencies=["sub1"]),
             ],
-            edges=[CEGEdge(source="sub1", target="sub2", edge_type=EdgeType.SEQUENTIAL)],
+            edges=[
+                CEGEdge(source="sub1", target="sub2", edge_type=EdgeType.SEQUENTIAL)
+            ],
         )
         parent = CEGGraph(
             nodes=[
                 CEGNode(id="start", objective="Start"),
-                CEGNode(id="process_sub", objective="Process in subgraph", dependencies=["start"], subgraph=sub),
+                CEGNode(
+                    id="process_sub",
+                    objective="Process in subgraph",
+                    dependencies=["start"],
+                    subgraph=sub,
+                ),
                 CEGNode(id="finish", objective="Finish", dependencies=["process_sub"]),
             ],
             edges=[
-                CEGEdge(source="start", target="process_sub", edge_type=EdgeType.SEQUENTIAL),
-                CEGEdge(source="process_sub", target="finish", edge_type=EdgeType.SEQUENTIAL),
+                CEGEdge(
+                    source="start", target="process_sub", edge_type=EdgeType.SEQUENTIAL
+                ),
+                CEGEdge(
+                    source="process_sub", target="finish", edge_type=EdgeType.SEQUENTIAL
+                ),
             ],
         )
 
@@ -81,17 +88,28 @@ class TestSubgraphCompilationAndExecution:
                 CEGNode(id="sub1", objective="Step 1"),
                 CEGNode(id="sub2", objective="Step 2", dependencies=["sub1"]),
             ],
-            edges=[CEGEdge(source="sub1", target="sub2", edge_type=EdgeType.SEQUENTIAL)],
+            edges=[
+                CEGEdge(source="sub1", target="sub2", edge_type=EdgeType.SEQUENTIAL)
+            ],
         )
         parent = CEGGraph(
             nodes=[
                 CEGNode(id="start", objective="Start"),
-                CEGNode(id="team_work", objective="Team execution", dependencies=["start"], subgraph=sub),
+                CEGNode(
+                    id="team_work",
+                    objective="Team execution",
+                    dependencies=["start"],
+                    subgraph=sub,
+                ),
                 CEGNode(id="summary", objective="Summary", dependencies=["team_work"]),
             ],
             edges=[
-                CEGEdge(source="start", target="team_work", edge_type=EdgeType.SEQUENTIAL),
-                CEGEdge(source="team_work", target="summary", edge_type=EdgeType.SEQUENTIAL),
+                CEGEdge(
+                    source="start", target="team_work", edge_type=EdgeType.SEQUENTIAL
+                ),
+                CEGEdge(
+                    source="team_work", target="summary", edge_type=EdgeType.SEQUENTIAL
+                ),
             ],
         )
 
@@ -110,12 +128,14 @@ class TestSubgraphCompilationAndExecution:
         assert "sub2" in team_out
 
         # Check execution log contains inner step records tagged with subgraph_parent
-        log_sub = [e for e in state["execution_log"] if e.get("subgraph_parent") == "team_work"]
+        log_sub = [
+            e for e in state["execution_log"] if e.get("subgraph_parent") == "team_work"
+        ]
         assert len(log_sub) >= 2
 
 
 class TestHierarchicalMultiAgentSupervisor:
-    """Test full hierarchical multi-agent supervisor pattern with research & analytics teams."""
+    """Hierarchical multi-agent supervisor with research and analytics teams."""
 
     def test_compile_hierarchical_supervisor_graph(self):
         graph = build_hierarchical_supervisor_graph()
