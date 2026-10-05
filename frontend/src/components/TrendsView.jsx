@@ -10,7 +10,7 @@ import {
   LineChart,
   Line,
 } from 'recharts';
-import { TrendingUp, DollarSign, Clock, Award, Zap, Activity } from 'lucide-react';
+import { TrendingUp, DollarSign, Clock, Award, Zap } from 'lucide-react';
 
 const CustomTooltip = ({ active, payload, label }) => {
   if (active && payload && payload.length) {
@@ -52,8 +52,10 @@ export default function TrendsView({ executions, apiBaseUrl }) {
       const reversedExecs = [...executions].reverse();
 
       const dataPromises = reversedExecs.map(async (exec, idx) => {
-        let qualityScore = exec.status === 'completed' ? 0.95 : 0.0;
-        let compositeScore = exec.status === 'completed' ? 0.90 : 0.0;
+        // No metrics (paused run, fetch error) or an unmeasured score → null:
+        // the chart shows a gap instead of an invented value.
+        let qualityScore = null;
+        let compositeScore = null;
 
         try {
           const res = await fetch(`${apiBaseUrl}/executions/${exec.id}/metrics`);
@@ -63,7 +65,7 @@ export default function TrendsView({ executions, apiBaseUrl }) {
             compositeScore = m.composite_score;
           }
         } catch (e) {
-          // fallback default
+          console.error(`Metrics unavailable for ${exec.id}:`, e);
         }
 
         return {
@@ -71,8 +73,8 @@ export default function TrendsView({ executions, apiBaseUrl }) {
           scenario: exec.scenario_name,
           cost: parseFloat((exec.total_cost || 0).toFixed(4)),
           latency: parseFloat((exec.total_latency_ms || 0).toFixed(1)),
-          quality: parseFloat((qualityScore * 100).toFixed(1)),
-          composite: parseFloat((compositeScore * 100).toFixed(1)),
+          quality: toPercent(qualityScore),
+          composite: toPercent(compositeScore),
           status: exec.status,
         };
       });
@@ -322,4 +324,8 @@ export default function TrendsView({ executions, apiBaseUrl }) {
       </div>
     </div>
   );
+}
+
+function toPercent(score) {
+  return score == null ? null : parseFloat((score * 100).toFixed(1));
 }

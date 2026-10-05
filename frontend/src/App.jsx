@@ -1,15 +1,17 @@
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import Navbar from './components/Navbar';
 import ExecutionList from './components/ExecutionList';
 import ExecutionDetail from './components/ExecutionDetail';
 import FlowGraph from './components/FlowGraph';
 import NodeInspector from './components/NodeInspector';
-import ExecutionCompare from './components/ExecutionCompare';
-import TrendsView from './components/TrendsView';
+// Loaded on demand: the Trends view pulls in recharts, Compare a second graph.
+const ExecutionCompare = lazy(() => import('./components/ExecutionCompare'));
+const TrendsView = lazy(() => import('./components/TrendsView'));
 import TaskExecutionModal from './components/TaskExecutionModal';
 import ErrorBoundary from './components/ErrorBoundary';
 
-const API_BASE_URL = 'http://localhost:8000';
+// Set VITE_API_URL (e.g. in frontend/.env.local) to target another backend.
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -22,13 +24,13 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   // Fetch executions list
-  const fetchExecutions = () => {
+  const fetchExecutions = useCallback(() => {
     fetch(`${API_BASE_URL}/executions`)
       .then((res) => res.json())
       .then((data) => {
         setExecutions(data);
-        if (data.length > 0 && !selectedExecId) {
-          setSelectedExecId(data[0].id);
+        if (data.length > 0) {
+          setSelectedExecId((prev) => prev ?? data[0].id);
         }
         setLoading(false);
       })
@@ -36,7 +38,7 @@ export default function App() {
         console.error('API fetch error:', err);
         setLoading(false);
       });
-  };
+  }, []);
 
   useEffect(() => {
     fetch(`${API_BASE_URL}/health`)
@@ -45,7 +47,7 @@ export default function App() {
       .catch(() => setHealthStatus('disconnected'));
 
     fetchExecutions();
-  }, []);
+  }, [fetchExecutions]);
 
   // Fetch full detail whenever selectedExecId changes or executions first load
   const activeExecId = selectedExecId || (executions.length > 0 ? executions[0].id : null);
@@ -59,8 +61,8 @@ export default function App() {
         })
         .then((data) => {
           setSelectedExecDetail(data);
-          if (data?.graph?.nodes?.length > 0 && !selectedGraphNodeId) {
-            setSelectedGraphNodeId(data.graph.nodes[0].id);
+          if (data?.graph?.nodes?.length > 0) {
+            setSelectedGraphNodeId((prev) => prev ?? data.graph.nodes[0].id);
           }
         })
         .catch((err) => console.error(err));
@@ -97,6 +99,7 @@ export default function App() {
       {/* Main Viewport Content */}
       <main className="main-content">
         <ErrorBoundary>
+          <Suspense fallback={<div className="mono">Loading view…</div>}>
           {loading ? (
             <div
               className="ide-window"
@@ -230,6 +233,7 @@ export default function App() {
               )}
             </div>
           )}
+          </Suspense>
         </ErrorBoundary>
       </main>
 

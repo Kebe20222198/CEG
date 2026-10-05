@@ -6,8 +6,6 @@ import {
   GitPullRequest,
   BarChart2,
   Play,
-  Terminal,
-  Cpu,
 } from 'lucide-react';
 
 export default function Navbar({

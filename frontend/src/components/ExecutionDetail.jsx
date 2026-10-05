@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ArrowLeft,
   Zap,
@@ -6,12 +6,6 @@ import {
   UserCheck,
   CheckCircle2,
   XCircle,
-  Clock,
-  Layers,
-  Terminal,
-  ShieldCheck,
-  Cpu,
-  CornerDownRight,
 } from 'lucide-react';
 import FlowGraph from './FlowGraph';
 import NodeInspector from './NodeInspector';
@@ -19,7 +13,6 @@ import NodeInspector from './NodeInspector';
 export default function ExecutionDetail({
   executionId,
   executions = [],
-  onSelectExecution,
   onBack,
   onRunNew,
   apiBaseUrl,
@@ -32,8 +25,9 @@ export default function ExecutionDetail({
   const [error, setError] = useState(null);
   const [selectedNodeId, setSelectedNodeId] = useState(null);
   const [isResuming, setIsResuming] = useState(false);
+  const [resumeError, setResumeError] = useState(null);
 
-  const fetchDetail = () => {
+  const fetchDetail = useCallback(() => {
     if (!currentExecId) {
       setLoading(false);
       return;
@@ -70,15 +64,16 @@ export default function ExecutionDetail({
         setError(err.message);
         setLoading(false);
       });
-  };
+  }, [currentExecId, apiBaseUrl]);
 
   useEffect(() => {
     fetchDetail();
-  }, [currentExecId, apiBaseUrl]);
+  }, [fetchDetail]);
 
   // Handle HITL resume action (Approve / Reject)
   const handleHITLResume = async (approved) => {
     setIsResuming(true);
+    setResumeError(null);
     try {
       const res = await fetch(`${apiBaseUrl}/executions/${currentExecId}/resume`, {
         method: 'POST',
@@ -92,9 +87,13 @@ export default function ExecutionDetail({
       });
       if (res.ok) {
         fetchDetail();
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setResumeError(errData.detail || `Resume failed (HTTP ${res.status})`);
       }
     } catch (err) {
       console.error('Resume error:', err);
+      setResumeError(err.message);
     } finally {
       setIsResuming(false);
     }
@@ -170,7 +169,8 @@ export default function ExecutionDetail({
   const selectedTraceObj = traces.find((t) => t.node_id === selectedNodeId);
   const selectedRawOutput = detail.workflow_state?.node_outputs?.[selectedNodeId];
 
-  const hasHITLInterruption = detail.workflow_state?.human_approvals && !detail.workflow_state?.human_approvals?.manual_resume;
+  const hasHITLInterruption = detail.status === 'awaiting_approval';
+  const pendingApprovals = detail.workflow_state?.pending_approvals || [];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -270,8 +270,15 @@ export default function ExecutionDetail({
                 HUMAN-IN-THE-LOOP INTERRUPT ACTIVE
               </div>
               <div style={{ fontSize: '0.75rem', color: '#c084fc' }}>
-                This execution hit a checkpointed approval node. A human decision is required to proceed.
+                {pendingApprovals.length > 0
+                  ? pendingApprovals.map((p) => p.message).join(' • ')
+                  : 'This execution hit a checkpointed approval node. A human decision is required to proceed.'}
               </div>
+              {resumeError && (
+                <div style={{ fontSize: '0.75rem', color: 'var(--status-failed)', marginTop: '4px' }}>
+                  {resumeError}
+                </div>
+              )}
             </div>
           </div>
 
@@ -317,7 +324,7 @@ export default function ExecutionDetail({
                 COMPOSITE SCORE
               </div>
               <div className="mono" style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--accent-primary)' }}>
-                {(metrics.composite_score * 100).toFixed(1)}%
+                {formatScore(metrics.composite_score)}
               </div>
             </div>
           </div>
@@ -327,7 +334,7 @@ export default function ExecutionDetail({
               QUALITY SCORE
             </div>
             <div className="mono" style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--status-completed)' }}>
-              {(metrics.quality_score * 100).toFixed(1)}%
+              {formatScore(metrics.quality_score)}
             </div>
           </div>
 
@@ -336,7 +343,7 @@ export default function ExecutionDetail({
               ROBUSTNESS SCORE
             </div>
             <div className="mono" style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--accent-violet)' }}>
-              {(metrics.robustness_score * 100).toFixed(1)}%
+              {formatScore(metrics.robustness_score)}
             </div>
           </div>
 
@@ -345,7 +352,7 @@ export default function ExecutionDetail({
               EVAL ENGINE
             </div>
             <div className="mono" style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-              LLM-as-Judge + Auto
+              {judgeLabel(metrics.report?.metadata?.judge)}
             </div>
           </div>
         </div>
@@ -473,4 +480,14 @@ export default function ExecutionDetail({
 
     </div>
   );
+}
+
+// A null score was not measured: show it as such instead of 0%.
+function formatScore(value) {
+  return value == null ? 'not measured' : `${(value * 100).toFixed(1)}%`;
+}
+
+function judgeLabel(judge) {
+  if (!judge) return 'LLM-as-Judge';
+  return judge.startsWith('Mock') ? `${judge} (simulated scores)` : judge;
 }

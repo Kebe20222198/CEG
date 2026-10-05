@@ -292,6 +292,14 @@ code, pre, .mono {
 }
 .status-pill.pending .status-pill-dot { background: var(--status-pending); }
 
+/* Execution paused on a Human-in-the-Loop node */
+.status-pill.awaiting_approval {
+  background: rgba(139, 92, 246, 0.12);
+  border-color: rgba(139, 92, 246, 0.4);
+  color: var(--accent-violet);
+}
+.status-pill.awaiting_approval .status-pill-dot { background: var(--accent-violet); }
+
 /* Animation Keyframes */
 @keyframes pulse-glow {
   0%, 100% { transform: scale(1); opacity: 1; }

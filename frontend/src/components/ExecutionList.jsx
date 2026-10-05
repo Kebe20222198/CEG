@@ -1,18 +1,7 @@
 import React, { useState } from 'react';
-import {
-  Search,
-  Filter,
-  ArrowUpRight,
-  PlayCircle,
-  Activity,
-  Layers,
-  Zap,
-  Clock,
-  DollarSign,
-  TrendingUp,
-} from 'lucide-react';
+import { Search, ArrowUpRight } from 'lucide-react';
 
-export default function ExecutionList({ executions, onSelectExecution, onRunNew }) {
+export default function ExecutionList({ executions, onSelectExecution }) {
   const [statusFilter, setStatusFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -200,7 +189,7 @@ export default function ExecutionList({ executions, onSelectExecution, onRunNew 
               border: '1px solid var(--border-default)',
             }}
           >
-            {['all', 'completed', 'failed', 'running', 'skipped'].map((st) => {
+            {['all', 'completed', 'failed', 'running', 'awaiting_approval'].map((st) => {
               const active = statusFilter === st;
               return (
                 <button

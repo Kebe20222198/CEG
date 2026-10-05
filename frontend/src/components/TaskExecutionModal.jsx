@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Play, X, Terminal, Cpu, Layers } from 'lucide-react';
+import { Play, X, Terminal } from 'lucide-react';
 
 const DEFAULT_TASKS = [
   {

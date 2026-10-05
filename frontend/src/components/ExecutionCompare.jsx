@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { GitCompare, ArrowRightLeft, TrendingUp, DollarSign, Clock, Zap } from 'lucide-react';
+import { ArrowRightLeft } from 'lucide-react';
 import FlowGraph from './FlowGraph';
 
 export default function ExecutionCompare({ executions, apiBaseUrl }) {
@@ -17,12 +17,11 @@ export default function ExecutionCompare({ executions, apiBaseUrl }) {
   // Synchronize execution IDs when executions array loads
   useEffect(() => {
     if (executions && executions.length > 0) {
-      if (!execIdA || !executions.some((e) => e.id === execIdA)) {
-        setExecIdA(executions[0].id);
-      }
-      if (!execIdB || !executions.some((e) => e.id === execIdB)) {
-        setExecIdB(executions[1]?.id || executions[0].id);
-      }
+      const known = (id) => id && executions.some((e) => e.id === id);
+      setExecIdA((prev) => (known(prev) ? prev : executions[0].id));
+      setExecIdB((prev) =>
+        known(prev) ? prev : executions[1]?.id || executions[0].id
+      );
     }
   }, [executions]);
 
@@ -51,10 +50,19 @@ export default function ExecutionCompare({ executions, apiBaseUrl }) {
   // Compute differential deltas (B - A)
   const costDiff = (detailB?.total_cost || 0) - (detailA?.total_cost || 0);
   const latencyDiff = (detailB?.total_latency_ms || 0) - (detailA?.total_latency_ms || 0);
-  const qualityDiff =
-    ((metricsB?.quality_score || 0) - (metricsA?.quality_score || 0)) * 100;
-  const compositeDiff =
-    ((metricsB?.composite_score || 0) - (metricsA?.composite_score || 0)) * 100;
+  // A null score was not measured: no delta can be computed from it.
+  const scoreDelta = (a, b) => (a == null || b == null ? null : (b - a) * 100);
+  const qualityDiff = scoreDelta(metricsA?.quality_score, metricsB?.quality_score);
+  const compositeDiff = scoreDelta(metricsA?.composite_score, metricsB?.composite_score);
+  const formatScore = (v) => (v == null ? 'n/a' : `${(v * 100).toFixed(1)}%`);
+  const formatDelta = (d) =>
+    d == null ? 'n/a' : d >= 0 ? `+${d.toFixed(1)}%` : `${d.toFixed(1)}%`;
+  const deltaColor = (d) =>
+    d == null
+      ? 'var(--text-muted)'
+      : d >= 0
+        ? 'var(--status-completed)'
+        : 'var(--status-failed)';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -225,17 +233,17 @@ export default function ExecutionCompare({ executions, apiBaseUrl }) {
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginTop: '4px' }}>
             <span className="mono" style={{ fontSize: '1.25rem', fontWeight: 700 }}>
-              {((metricsB?.quality_score || 0) * 100).toFixed(1)}%
+              {formatScore(metricsB?.quality_score)}
             </span>
             <span
               className="mono"
               style={{
                 fontSize: '0.75rem',
                 fontWeight: 600,
-                color: qualityDiff >= 0 ? 'var(--status-completed)' : 'var(--status-failed)',
+                color: deltaColor(qualityDiff),
               }}
             >
-              {qualityDiff >= 0 ? `+${qualityDiff.toFixed(1)}%` : `${qualityDiff.toFixed(1)}%`}
+              {formatDelta(qualityDiff)}
             </span>
           </div>
         </div>
@@ -254,17 +262,17 @@ export default function ExecutionCompare({ executions, apiBaseUrl }) {
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginTop: '4px' }}>
             <span className="mono" style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--accent-primary)' }}>
-              {((metricsB?.composite_score || 0) * 100).toFixed(1)}%
+              {formatScore(metricsB?.composite_score)}
             </span>
             <span
               className="mono"
               style={{
                 fontSize: '0.75rem',
                 fontWeight: 600,
-                color: compositeDiff >= 0 ? 'var(--status-completed)' : 'var(--status-failed)',
+                color: deltaColor(compositeDiff),
               }}
             >
-              {compositeDiff >= 0 ? `+${compositeDiff.toFixed(1)}%` : `${compositeDiff.toFixed(1)}%`}
+              {formatDelta(compositeDiff)}
             </span>
           </div>
         </div>

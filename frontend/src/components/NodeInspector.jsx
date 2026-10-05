@@ -9,7 +9,6 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
-  Info,
   Terminal,
   Layers,
 } from 'lucide-react';
@@ -18,7 +17,6 @@ export default function NodeInspector({
   selectedNode,
   traceInfo,
   rawOutput,
-  onClose,
 }) {
   const [copied, setCopied] = useState(false);
   const [expandedSections, setExpandedSections] = useState({
