@@ -1,8 +1,45 @@
 # CEG — Cognitive Execution Graph Studio
 
-**CEG (Cognitive Execution Graph)** est une plateforme complète et un framework d'orchestration de tâches cognitives LLM avec compilation vers **LangGraph**, moteur de décision dynamique, évaluation composite (LLM-as-judge + métriques auto) et interface de visualisation interactive Studio.
+**CEG (Cognitive Execution Graph)** est une plateforme et un framework **agnostiques** — vis-à-vis du framework agentique, de l'infrastructure et du fournisseur de LLM — qui ajoutent une **couche d'abstraction déclarative** au-dessus des workflows d'agents. On décrit l'**objectif métier**, les **contraintes** (budget, latence, qualité, outils autorisés) et le découpage en sous-tâches ; CEG se charge de **traduire** cette déclaration en workflow, de décider **comment l'exécuter** et de **choisir les modèles** adaptés à chaque étape.
+
+C'est, à peu près, ce que fait **SQL** pour les bases de données relationnelles : on écrit *quoi* obtenir, le moteur décide *comment*. Aujourd'hui, CEG exécute ses plans avec **LangGraph** et avec un **backend Python** sans framework, qui sert de seconde implémentation de référence ; d'autres moteurs peuvent s'ajouter sans changer les déclarations.
 
 > ⚠️ **Exécution simulée.** Les nœuds sont exécutés par des exécuteurs Python déterministes (`MockExecutor` et ses sous-classes métier), pas par de vrais appels LLM. Le coût et la latence d'un nœud sont ceux du modèle simulé choisi par le Runtime Decision Engine, et la qualité est notée par `MockJudgeClient`, dont les scores ne dépendent pas du contenu des sorties. Voir [Limites connues](#-limites-connues).
+
+---
+
+## 🧩 Architecture : déclarer → planifier → optimiser → exécuter
+
+| SQL | CEG | Où |
+|---|---|---|
+| Requête déclarative | `CognitiveTask` : objectif, contraintes, sous-tâches | `ceg.models.task` |
+| Planificateur | `plan(task)` → graphe d'exécution (`CEGGraph`), indépendant du moteur | `ceg.planner` |
+| Optimiseur par coût | Choix du modèle par nœud sous contraintes (Runtime Decision Engine) | `ceg.runtime` |
+| Moteur d'exécution | Backend : `langgraph`, `python`, … | `ceg.backends` |
+| `EXPLAIN` | Traces, décisions et fallbacks enregistrés, CEG Studio | API + frontend |
+
+```python
+from ceg import CognitiveTask, SubTask, TaskConstraint, get_backend, plan
+
+task = CognitiveTask(
+    objective="Alerter si les ventes d'une région chutent de plus de 20 %",
+    task_constraints=TaskConstraint(max_cost_usd=0.50, max_latency_seconds=15),
+    tools_allowed=["send_alert"],
+    subtasks=[
+        SubTask(id="fetch", objective="Charger les ventes", model_tier_hint="fast"),
+        SubTask(id="detect", objective="Détecter les chutes", dependencies=["fetch"],
+                required_capabilities=["anomaly_detection"], model_tier_hint="quality"),
+        SubTask(id="alert", objective="Envoyer l'alerte", tools=["send_alert"],
+                run_if="detect.anomalies_found"),
+    ],
+)
+
+graph = plan(task)                                   # quoi → plan
+workflow = get_backend("langgraph").compile(graph)   # ou get_backend("python")
+state = workflow.invoke({"inputs": {...}})           # le moteur choisit les modèles
+```
+
+Les nœuds sont exécutés par des **exécuteurs** (protocole `Executor`) : c'est là que se branche un fournisseur de LLM, sans toucher au reste.
 
 ---
 
@@ -12,8 +49,8 @@
 CEG/
 ├── backend/                  # API REST FastAPI & Moteur CEG Core
 │   ├── api/                  # Routes REST, service d'exécution, modèles SQLAlchemy, schémas
-│   ├── src/ceg/              # Framework CEG (Compilateur, Runtime, Evaluation)
-│   ├── tests/                # Suite de 295 tests automatisés (pytest)
+│   ├── src/ceg/              # Framework CEG (planificateur, backends, runtime, évaluation)
+│   ├── tests/                # Suite de 357 tests automatisés (pytest)
 │   └── pyproject.toml        # Configuration Python, dépendances, linters
 │
 ├── frontend/                 # Application Web React 19 + Vite (Dev-Tool Studio)
@@ -82,7 +119,7 @@ npm run dev
 
 ```bash
 cd backend
-pytest                      # 295 tests (base SQLite temporaire, jamais ceg.db)
+pytest                      # 357 tests (base SQLite temporaire, jamais ceg.db)
 ruff check . && ruff format --check .
 mypy                        # mode strict sur src/, api/ et tests/
 
@@ -105,7 +142,7 @@ Le **Runtime Decision Engine** intervient dynamiquement à chaque nœud du graph
    - Le modèle choisi est **transmis à l'exécuteur** : le coût et la latence enregistrés sont ceux de ce modèle.
    - La décision (modèle, score, candidats, budget restant) est enregistrée dans `execution_log[*].decision`.
 
-2. **Suivre le budget transverse** (`budget_total`, `budget_used`, `budget_remaining`). Le budget est remis à zéro à chaque `invoke()` (une exécution = un budget) et conservé lors d'un `resume()`. Il n'est jamais dépassé : quand plus aucun modèle n'est finançable, seule une exécution dégradée qui tient dans le reste du budget est tentée, sinon le nœud est abandonné.
+2. **Suivre le budget et la latence transverses** (`budget_total`, `max_total_latency_ms`). Le budget est remis à zéro à chaque `invoke()` (une exécution = un budget) et conservé lors d'un `resume()`. Ni le budget ni la latence cumulée ne sont jamais dépassés : quand plus aucun modèle ne tient, seule une exécution dégradée qui tient encore est tentée, sinon le nœud est abandonné. Si **aucun modèle ne possède les capacités** demandées, le nœud est refusé — jamais exécuté sur un modèle incapable.
 
 3. **Orchestrer les 5 stratégies de fallback** (`FallbackOrchestrator`) en cas d'échec d'exécution. Les stratégies réellement tentées sont enregistrées dans `execution_log[*].fallbacks_triggered` (ou dans `NodeAbortError.fallbacks_triggered`) :
    - **Retry** : Réessaie le même modèle jusqu'à $N$ tentatives.
@@ -116,15 +153,55 @@ Le **Runtime Decision Engine** intervient dynamiquement à chaque nœud du graph
 
 ---
 
-## 🧭 Compilateur, entrées et Human-in-the-Loop
+## 📝 Langage déclaratif et planificateur
 
-- **Entrées du graphe** : elles sont passées sous la clé `inputs` et transmises à chaque exécuteur, fusionnées avec les sorties des nœuds amont : `workflow.invoke({"inputs": {"csv_path": "data.csv"}})`. Un sous-graphe reçoit les entrées et les sorties amont de son parent.
-- **Human-in-the-Loop** : un graphe qui contient des nœuds `interrupt_before` / `interrupt_after` (y compris dans un sous-graphe) **refuse de compiler sans checkpointer**, pour qu'une étape d'approbation ne soit jamais contournée silencieusement. Pour une exécution non surveillée (benchmark), il faut le demander explicitement avec `compile(graph, ignore_interrupts=True)`.
+Une `SubTask` décrit une étape du travail ; le planificateur (`ceg.planner.plan`) en déduit le graphe :
+
+| Champ de `SubTask` | Effet dans le plan |
+|---|---|
+| `dependencies` | Arêtes ; les sous-tâches qui n'attendent que le même travail sont **parallélisées automatiquement** |
+| `run_if="detect.anomalies_found"` | Arête conditionnelle : la sous-tâche est sautée si la clé est fausse |
+| `repeat=RepeatSpec(back_to, while_key, max_iterations)` | Boucle bornée (ex. rédiger ↔ critiquer, 3 fois au plus) |
+| `requires_approval` / `review_output` | Point Human-in-the-Loop avant / après la sous-tâche |
+| `required_capabilities`, `model_tier_hint` | Contraintes et préférences pour le choix du modèle |
+| `tools` | Outils utilisés, vérifiés contre `tools_allowed` de la tâche |
+| `subtasks` (imbriquées) | Équipe : planifiée comme un sous-graphe |
+
+Une déclaration incohérente (dépendance inconnue, `run_if` mal formé, boucle vers une sous-tâche qui n'est pas en amont, outil non autorisé, tier inconnu) lève `PlanningError` : elle est **refusée avant toute exécution**. Tous les pipelines de démonstration sont écrits ainsi : leur `CognitiveTask` est la seule source de vérité, leur graphe vient du planificateur.
+
+**Entrées** : elles sont passées sous la clé `inputs` et transmises à chaque exécuteur avec les sorties des nœuds amont : `workflow.invoke({"inputs": {"csv_path": "data.csv"}})`. Un sous-graphe reçoit les entrées et les sorties amont de son parent.
+
+---
+
+## 🛡️ Contraintes : garanties ou refusées
+
+| Contrainte déclarée | Comment CEG la tient |
+|---|---|
+| `max_cost_usd` | Budget du moteur, **jamais dépassé** à l'exécution |
+| `max_latency_seconds` | Budget de latence cumulée, **jamais dépassé** à l'exécution |
+| `tools_allowed` | **Refus** au plan (et à la compilation d'un graphe écrit à la main) |
+| `required_capabilities` | **Refus** à la compilation si aucun modèle disponible ne les offre |
+| `min_quality_score` | **Vérifiée après coup** par l'Evaluation Engine : une violation fait échouer l'exécution ; non vérifiable si la qualité n'est pas mesurée |
+
+Un moteur fourni par l'appelant peut être plus strict que la déclaration, jamais plus laxiste.
+
+---
+
+## 🔌 Backends d'exécution
+
+| Backend | Exécution | Human-in-the-Loop |
+|---|---|---|
+| `langgraph` (défaut) | `StateGraph` LangGraph, branches parallèles par super-steps | ✅ via checkpointer |
+| `python` | Interpréteur Python sans framework, branches exécutées l'une après l'autre | ❌ refusé (sauf `ignore_interrupts=True`) |
+
+Les deux backends partagent la logique d'un nœud (sélection du modèle, fallbacks, sous-graphes) et les contrôles de contraintes (`ceg.backends.common`). Les tests (`tests/test_backends.py`) vérifient que **la même tâche donne exactement le même résultat** sur les deux : statuts, sorties, coût, latence et modèle choisi pour chaque nœud, sur tous les pipelines de démonstration. Un backend qui ne sait pas faire une chose déclarée (ici, une approbation humaine) **refuse** le plan plutôt que de l'ignorer.
+
+**Human-in-the-Loop sur LangGraph** : un graphe avec points d'approbation refuse de compiler sans checkpointer, pour qu'une approbation ne soit jamais contournée silencieusement.
 
 ```python
 from langgraph.checkpoint.memory import MemorySaver
 
-workflow = CEGCompiler().compile(graph, checkpointer=MemorySaver())
+workflow = get_backend("langgraph").compile(graph, checkpointer=MemorySaver())
 state = workflow.invoke(thread_id="run-1")      # s'arrête avant le nœud à approuver
 state = workflow.resume("run-1", value=True)    # False ou {"approved": False} pour rejeter
 ```
@@ -155,7 +232,7 @@ fetch_data → aggregate_region → compute_trend → detect_anomaly
                                          (ou SKIPPED si aucune anomalie)
 ```
 
-### Les 5 sous-tâches (CEGNode)
+### Les 5 sous-tâches (déclarées dans `analyse_ventes_alertes()`)
 
 | Nœud | Capacités requises | Tier | Modèle choisi (registre par défaut) |
 |---|---|---|---|
@@ -174,9 +251,9 @@ fetch_data → aggregate_region → compute_trend → detect_anomaly
 | Score qualité min | 0.85 |
 | Outils autorisés | `sql_query`, `send_alert`, `data_aggregator` |
 
-### Arête Conditionnelle (nouveauté S4)
+### Condition `run_if`
 
-L'arête `detect_anomaly → generate_alert` est de type **CONDITIONAL** avec la clé `anomalies_found`.
+`generate_alert` déclare `run_if="detect_anomaly.anomalies_found"` ; le planificateur en fait une arête **CONDITIONAL**.
 - Si `detect_anomaly` retourne `{"anomalies_found": True, ...}` → `generate_alert` s'exécute.
 - Sinon → `generate_alert` est marqué `status="skipped"` et le graphe se termine proprement.
 
@@ -192,11 +269,11 @@ L'arête `detect_anomaly → generate_alert` est de type **CONDITIONAL** avec la
 ### Utilisation
 
 ```python
-from ceg.use_cases.sales_pipeline import build_sales_graph, SalesExecutor
-from ceg.compiler.compiler import CEGCompiler
+from ceg import get_backend, plan
+from ceg.use_cases.sales_pipeline import SalesExecutor, analyse_ventes_alertes
 
-graph = build_sales_graph()
-workflow = CEGCompiler(executor=SalesExecutor()).compile(graph)
+graph = plan(analyse_ventes_alertes())
+workflow = get_backend("langgraph").compile(graph, executor=SalesExecutor())
 result = workflow.invoke({"inputs": {"csv_path": "data/transactions.csv"}})
 ```
 
@@ -266,16 +343,17 @@ Avec des exécuteurs déterministes, les N runs donnent tous le même résultat 
 ### Utilisation
 
 ```python
+from ceg import get_backend, plan
 from ceg.evaluation import EvaluationEngine, MockJudgeClient
 from ceg.use_cases.sales_criteria import ALL_SALES_CRITERIA
-from ceg.use_cases.sales_pipeline import build_sales_graph, SalesExecutor
-from ceg.compiler.compiler import CEGCompiler
+from ceg.use_cases.sales_pipeline import SalesExecutor, analyse_ventes_alertes, build_sales_graph
 
 inputs = {"csv_path": "data/transactions.csv"}
+task = analyse_ventes_alertes()
 
 # 1. Exécuter le pipeline
-graph = build_sales_graph()
-state = CEGCompiler(executor=SalesExecutor()).compile(graph).invoke({"inputs": inputs})
+workflow = get_backend("langgraph").compile(plan(task), executor=SalesExecutor())
+state = workflow.invoke({"inputs": inputs})
 
 # 2. Mesurer la robustesse (N runs)
 engine = EvaluationEngine(judge=MockJudgeClient(), criteria=ALL_SALES_CRITERIA)
@@ -290,10 +368,10 @@ rob = engine.measure_robustness(
 report = engine.evaluate(
     state,
     scenario_name="production",
-    max_budget_usd=0.50,
-    max_latency_seconds=15.0,
     robustness_score=rob.success_rate,
+    constraints=task.task_constraints,   # plafonds + vérification des contraintes
 )
+print(report.constraint_violations, report.constraints_unverified)
 print(f"Score composite : {report.composite_score:.3f}")
 print(f"Qualité         : {report.quality_score}")
 print(f"Robustesse      : {report.robustness_score}")
@@ -326,15 +404,16 @@ CEG expose l'ensemble de ses fonctionnalités via une **API REST FastAPI 0.110+*
 | `POST` | `/benchmark` | Lancer un benchmark (Stub 202 Accepted) |
 | `GET` | `/benchmark/{id}/results` | Résultats du benchmark (Stub) |
 | `GET` | `/models` | Modèles (simulés) du registre du Runtime Decision Engine |
+| `GET` | `/backends` | Backends d'exécution et leurs capacités |
 | `GET` | `/pipelines` | Modèles de pipeline utilisables par une tâche |
 | `GET` | `/health` | État du système et statut SQLite |
 
 ### Exécution d'une tâche
 
-- Une tâche nomme son **modèle de pipeline** dans le champ `pipeline` (`GET /pipelines`). Sans pipeline, son graphe est construit à partir de ses `subtasks` (une sous-tâche = un nœud, `dependencies` = arêtes).
-- Le budget du moteur et les plafonds du score composite viennent des `task_constraints` de la tâche ; les critères de qualité viennent du pipeline ou des `evaluation_criteria` de la tâche.
-- `POST /tasks/{id}/execute` accepte `scenario_name`, `inputs` (entrées du graphe), `csv_path` (pipelines CSV uniquement, limité aux données d'exemple et à `CEG_DATA_DIR`) et `robustness_runs` (0 par défaut : robustesse non mesurée).
-- Statuts d'une exécution : `running`, `awaiting_approval` (pause HITL), `completed`, `failed`. En cas d'échec, la trace contient les nœuds réellement exécutés, puis le nœud en échec avec son erreur et les fallbacks tentés.
+- Une tâche stockée est une **déclaration** : à chaque exécution elle est planifiée (`plan`), puis compilée sur le backend demandé. Une déclaration invalide est refusée dès `POST`/`PUT /tasks` (422).
+- Une tâche peut s'appuyer sur un **modèle de pipeline** (champ `pipeline`, `GET /pipelines`) qui fournit les exécuteurs et les critères de qualité. Sans sous-tâches propres, elle reprend celles du modèle.
+- `POST /tasks/{id}/execute` accepte `scenario_name`, `inputs` (entrées du graphe), `backend` (`langgraph` par défaut), `csv_path` (pipelines CSV uniquement, limité aux données d'exemple et à `CEG_DATA_DIR`) et `robustness_runs` (0 par défaut : robustesse non mesurée). Un backend qui ne peut pas honorer la tâche (ex. approbation humaine sur `python`) est refusé (400) avant toute exécution.
+- Statuts d'une exécution : `running`, `awaiting_approval` (pause HITL), `completed`, `failed`. En cas d'échec, la trace contient les nœuds réellement exécutés, puis le nœud en échec avec son erreur et les fallbacks tentés. Une exécution qui se termine sans respecter ses contraintes déclarées (ex. qualité sous `min_quality_score`) est `failed`, avec la violation dans `error`.
 - Une exécution en `awaiting_approval` se poursuit avec `POST /executions/{id}/resume` (`{"approved": true|false, "comment": "...", "value": {...}}`) ; la reprise d'une exécution qui n'est pas en attente répond 409.
 
 ---
@@ -352,7 +431,9 @@ backend/
 │   ├── seed.py           ← Ensemencement des données de démonstration
 │   └── routers/          ← Endpoints (tasks, executions, benchmark, models, health)
 ├── src/ceg/
-│   ├── models/           ← CognitiveTask, CEGNode, CEGGraph
+│   ├── models/           ← CognitiveTask (déclaration), CEGNode, CEGGraph (plan)
+│   ├── planner.py        ← CognitiveTask → CEGGraph
+│   ├── backends/         ← interface Backend, backends langgraph et python, logique commune
 │   ├── compiler/         ← CEG → LangGraph, état, exécuteurs
 │   ├── runtime/          ← Runtime Decision Engine, fallbacks
 │   ├── evaluation/       ← Evaluation Engine, LLM-as-judge
@@ -372,6 +453,7 @@ frontend/
 ## 🚧 Limites connues
 
 - **Exécution et jugement simulés** : pas d'appel LLM réel (voir l'encadré en tête). Les scores de qualité du `MockJudgeClient` ne mesurent pas la qualité des sorties ; brancher un vrai `JudgeClient` est nécessaire pour toute conclusion sur la qualité.
+- **Backend `python`** : pas d'approbation humaine, et les branches indépendantes s'exécutent l'une après l'autre (pas de vrai parallélisme). La latence contrôlée est la **somme** des latences des nœuds, pas le temps réel écoulé.
 - **Pauses HITL en mémoire** : le checkpointer de l'API est un `MemorySaver`. Une exécution en attente d'approbation ne survit pas à un redémarrage de l'API ; sa reprise échoue alors avec un message explicite.
 - **Pas d'authentification** sur l'API : à ne pas exposer en dehors d'un poste de développement.
 - **Migrations** : `init_db()` ajoute les colonnes manquantes, mais ne gère ni renommage ni suppression ; Alembic sera nécessaire pour des évolutions plus lourdes du schéma.
