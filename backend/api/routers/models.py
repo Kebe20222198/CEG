@@ -3,7 +3,8 @@
 from fastapi import APIRouter
 
 from api.pipelines import PIPELINES
-from api.schemas import ModelInfo, PipelineInfo
+from api.schemas import BackendInfo, ModelInfo, PipelineInfo
+from ceg.backends import available_backends
 from ceg.runtime.decision_engine import DEFAULT_MODEL_REGISTRY
 
 router = APIRouter(tags=["Models"])
@@ -21,6 +22,17 @@ def list_models() -> list[ModelInfo]:
             supported_capabilities=m.supported_capabilities,
         )
         for m in DEFAULT_MODEL_REGISTRY
+    ]
+
+
+@router.get(
+    "/backends", response_model=list[BackendInfo], summary="Backends d'exécution"
+)
+def list_backends() -> list[BackendInfo]:
+    """Moteurs capables d'exécuter un plan (champ ``backend`` de l'exécution)."""
+    return [
+        BackendInfo(id=b.name, supports_hitl=b.supports_hitl)
+        for b in available_backends()
     ]
 
 

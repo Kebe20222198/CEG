@@ -1,10 +1,15 @@
-"""Execution service: runs a task's graph, persists traces and metrics.
+"""Execution service: plans a task, runs it on a backend, stores the outcome.
 
 Shared by the REST routers and the seed script, so that both go through the
 same code path instead of the seed calling a route function directly.
 
-Every run is compiled with a checkpointer and uses the execution id as thread
-id. This gives two things:
+The stored task is a declaration: it is turned into a CognitiveTask, planned
+(``ceg.planner.plan``) and compiled on the requested backend, which enforces
+its constraints. A declaration or a backend that cannot honour them is
+refused before anything runs.
+
+Every run uses the execution id as thread id; on a backend supporting it, a
+checkpointer is attached. This gives two things:
   - Human-in-the-Loop: a run that reaches an approval node stops with status
     ``awaiting_approval`` and ``resume_execution`` continues the same run;
   - honest failure traces: when a node aborts, the nodes that completed
@@ -29,19 +34,20 @@ from langgraph.checkpoint.memory import MemorySaver
 from sqlalchemy.orm import Session
 
 from api.db import ExecutionModel, MetricModel, TaskModel, TraceModel
-from api.pipelines import PIPELINES, PipelineSpec, graph_from_subtasks
+from api.pipelines import PIPELINES, PipelineSpec
 from api.schemas import (
     ExecuteTaskRequest,
     ExecutionDetailResponse,
     ExecutionResponse,
     ResumeExecutionRequest,
 )
-from ceg.compiler.compiler import CEGCompiler, CompiledWorkflow
+from ceg.backends import DEFAULT_BACKEND, Backend, Workflow, get_backend
 from ceg.compiler.mock_executor import MockExecutor
 from ceg.evaluation.engine import EvaluationEngine
-from ceg.evaluation.models import Criterion
+from ceg.evaluation.models import Criterion, EvaluationReport
 from ceg.models.graph import CEGGraph
-from ceg.models.task import SubTask, TaskConstraint
+from ceg.models.task import CognitiveTask, SubTask, TaskConstraint
+from ceg.planner import PlanningError, plan
 from ceg.runtime.decision_engine import RuntimeDecisionEngine
 from ceg.runtime.fallback import NodeAbortError
 
@@ -114,10 +120,40 @@ def _pipeline_of(task: TaskModel) -> PipelineSpec | None:
     return spec
 
 
-def _constraints_of(task: TaskModel) -> TaskConstraint:
+def cognitive_task_of(task: TaskModel) -> CognitiveTask:
+    """The declaration stored for ``task``.
+
+    A task based on a pipeline template and declaring no sub-tasks of its
+    own uses the template's sub-tasks and tools; its constraints are its own
+    if set, else the template's. A task without any declared constraints
+    gets the defaults: every task the API runs has a budget and a latency
+    limit.
+    """
+    spec = PIPELINES.get(task.pipeline) if task.pipeline else None
+    template = spec.declare() if spec is not None else None
+
+    subtasks = [
+        SubTask.model_validate(st) for st in json.loads(task.subtasks_json or "[]")
+    ]
+    tools_allowed: list[str] = json.loads(task.tools_allowed_json or "[]")
+    if not subtasks and template is not None:
+        subtasks = template.subtasks
+        tools_allowed = template.tools_allowed
+
     if task.task_constraints_json:
-        return TaskConstraint.model_validate_json(task.task_constraints_json)
-    return TaskConstraint()
+        constraints = TaskConstraint.model_validate_json(task.task_constraints_json)
+    elif template is not None and template.task_constraints is not None:
+        constraints = template.task_constraints
+    else:
+        constraints = TaskConstraint()
+
+    return CognitiveTask(
+        name=task.name,
+        objective=task.objective,
+        task_constraints=constraints,
+        tools_allowed=tools_allowed,
+        subtasks=subtasks,
+    )
 
 
 def _criteria_of(task: TaskModel, spec: PipelineSpec | None) -> list[Criterion]:
@@ -131,23 +167,25 @@ def _executor_of(spec: PipelineSpec | None) -> MockExecutor:
     return spec.make_executor() if spec is not None else MockExecutor()
 
 
-def _graph_of(task: TaskModel, spec: PipelineSpec | None) -> CEGGraph:
-    if spec is not None:
-        return spec.build_graph()
-    subtasks = [
-        SubTask.model_validate(st) for st in json.loads(task.subtasks_json or "[]")
-    ]
+def _backend(name: str) -> Backend:
     try:
-        return graph_from_subtasks(task.objective, subtasks)
+        return get_backend(name)
     except ValueError as exc:
-        raise ExecutionRequestError(f"Invalid subtask graph: {exc}") from exc
+        raise ExecutionRequestError(str(exc)) from exc
 
 
 def _compile(
-    graph: CEGGraph, executor: MockExecutor, engine: RuntimeDecisionEngine
-) -> CompiledWorkflow:
-    return CEGCompiler(engine=engine, executor=executor).compile(
-        graph, checkpointer=CHECKPOINTER
+    backend: Backend,
+    graph: CEGGraph,
+    executor: MockExecutor,
+    engine: RuntimeDecisionEngine,
+) -> Workflow:
+    """Compile ``graph``; the backend enforces the task's constraints."""
+    return backend.compile(
+        graph,
+        engine=engine,
+        executor=executor,
+        checkpointer=CHECKPOINTER if backend.supports_hitl else None,
     )
 
 
@@ -166,9 +204,12 @@ def start_execution(
         ExecutionRequestError: If the request is invalid (nothing is stored).
     """
     spec = _pipeline_of(task)
-    graph = _graph_of(task, spec)
+    declaration = cognitive_task_of(task)
+    try:
+        graph = plan(declaration)
+    except PlanningError as exc:
+        raise ExecutionRequestError(f"Invalid task declaration: {exc}") from exc
     criteria = _criteria_of(task, spec)
-    constraints = _constraints_of(task)
 
     inputs = dict(payload.inputs)
     if spec is not None and spec.uses_csv:
@@ -176,10 +217,20 @@ def start_execution(
     elif payload.csv_path:
         raise ExecutionRequestError("This task's pipeline does not read a CSV file.")
 
+    # Compiling checks the plan against the backend and the constraints:
+    # a request that cannot be honoured is refused before anything is stored.
+    backend = _backend(payload.backend)
+    engine = RuntimeDecisionEngine()
+    try:
+        workflow = _compile(backend, graph, _executor_of(spec), engine)
+    except ValueError as exc:
+        raise ExecutionRequestError(str(exc)) from exc
+
     record = ExecutionModel(
         id=f"exec_{uuid.uuid4().hex[:12]}",
         task_id=task.id,
         scenario_name=payload.scenario_name,
+        backend=backend.name,
         status="running",
         started_at=_now(),
         graph_json=graph.model_dump_json(),
@@ -188,8 +239,6 @@ def start_execution(
     db.commit()
 
     try:
-        engine = RuntimeDecisionEngine(budget_total=constraints.max_cost_usd)
-        workflow = _compile(graph, _executor_of(spec), engine)
         state, error = _invoke(
             workflow,
             lambda: workflow.invoke({"inputs": inputs}, thread_id=record.id),
@@ -201,12 +250,14 @@ def start_execution(
             graph,
             state,
             error,
+            workflow,
             evaluation=_Evaluation(
                 criteria=criteria,
-                constraints=constraints,
+                declaration=declaration,
                 robustness_runs=payload.robustness_runs,
                 spec=spec,
                 inputs=inputs,
+                backend=backend.name,
             ),
         )
     except Exception as exc:
@@ -232,11 +283,16 @@ def resume_execution(
     if task is None:
         raise ExecutionStateError("The task of this execution no longer exists.")
 
+    backend = get_backend(record.backend or DEFAULT_BACKEND)
+    if not backend.supports_hitl:
+        raise ExecutionStateError(
+            f"The '{backend.name}' backend cannot resume an execution."
+        )
     spec = _pipeline_of(task)
-    constraints = _constraints_of(task)
+    # The plan the execution started with, with its task and constraints.
     graph = CEGGraph.model_validate_json(record.graph_json or "{}")
-    engine = RuntimeDecisionEngine(budget_total=constraints.max_cost_usd)
-    workflow = _compile(graph, _executor_of(spec), engine)
+    engine = RuntimeDecisionEngine()
+    workflow = _compile(backend, graph, _executor_of(spec), engine)
 
     snapshot = workflow.get_state(record.id)
     if not snapshot.next:
@@ -265,12 +321,14 @@ def resume_execution(
             graph,
             state,
             error,
+            workflow,
             evaluation=_Evaluation(
                 criteria=_criteria_of(task, spec),
-                constraints=constraints,
+                declaration=graph.task or cognitive_task_of(task),
                 robustness_runs=0,
                 spec=spec,
                 inputs={},
+                backend=backend.name,
             ),
         )
     except Exception as exc:
@@ -305,10 +363,15 @@ class _Evaluation:
     """What the Evaluation Engine needs once a run is over."""
 
     criteria: list[Criterion]
-    constraints: TaskConstraint
+    declaration: CognitiveTask
     robustness_runs: int
     spec: PipelineSpec | None
     inputs: dict[str, Any]
+    backend: str
+
+    @property
+    def constraints(self) -> TaskConstraint:
+        return self.declaration.task_constraints or TaskConstraint()
 
 
 def _now() -> datetime:
@@ -316,7 +379,7 @@ def _now() -> datetime:
 
 
 def _invoke(
-    workflow: CompiledWorkflow,
+    workflow: Workflow,
     run: Callable[[], dict[str, Any]],
     thread_id: str,
 ) -> tuple[dict[str, Any], NodeAbortError | None]:
@@ -349,9 +412,14 @@ def _store_outcome(
     graph: CEGGraph,
     state: dict[str, Any],
     error: NodeAbortError | None,
+    workflow: Workflow,
     evaluation: _Evaluation,
 ) -> None:
-    """Persist state, traces and (once the run is over) metrics."""
+    """Persist state, traces and (once the run is over) metrics.
+
+    A run that completed but does not meet its declared constraints (e.g. a
+    quality below ``min_quality_score``) is marked ``failed``.
+    """
     state = dict(state)
     interrupts = state.pop("__interrupt__", None)
     log: list[dict[str, Any]] = list(state.get("execution_log", []))
@@ -368,6 +436,20 @@ def _store_outcome(
         status = "completed"
         record.error = None
 
+    report: EvaluationReport | None = None
+    if status != "awaiting_approval":
+        report = _evaluate(record, state, evaluation)
+        if status == "completed" and report.constraint_violations:
+            status = "failed"
+            record.error = "Declared constraints not met: " + "; ".join(
+                report.constraint_violations
+            )
+        if status == "failed":
+            # A failed run produced no usable result: its speed and cost
+            # are no merit.
+            report.composite_score = 0.0
+            report.metadata["failed"] = True
+
     total_cost = float(state.get("total_cost", 0.0))
     total_latency_ms = float(state.get("total_latency_ms", 0.0))
     record.status = status
@@ -375,16 +457,16 @@ def _store_outcome(
     record.total_latency_ms = total_latency_ms
     record.workflow_state_json = json.dumps(state, default=str)
     record.summary = (
-        f"Scénario {record.scenario_name}: {status}. "
+        f"Scénario {record.scenario_name} ({evaluation.backend}): {status}. "
         f"Coût: ${total_cost:.4f}, Latence: {total_latency_ms:.1f}ms."
     )
 
     _replace_traces(db, record.id, graph, log)
 
-    if status != "awaiting_approval":
+    if report is not None:
         record.completed_at = _now()
-        _store_metrics(db, record, state, status, evaluation)
-        CHECKPOINTER.delete_thread(record.id)
+        _store_metrics(db, record, report)
+        workflow.discard(record.id)
 
     db.commit()
 
@@ -417,38 +499,34 @@ def _replace_traces(
         )
 
 
-def _store_metrics(
-    db: Session,
-    record: ExecutionModel,
-    state: dict[str, Any],
-    status: str,
-    evaluation: _Evaluation,
-) -> None:
+def _evaluate(
+    record: ExecutionModel, state: dict[str, Any], evaluation: _Evaluation
+) -> EvaluationReport:
     engine = EvaluationEngine(criteria=evaluation.criteria)
 
     robustness: float | None = None
-    spec = evaluation.spec
-    if evaluation.robustness_runs > 0 and spec is not None:
+    if evaluation.robustness_runs > 0:
+        spec = evaluation.spec
         robustness = engine.measure_robustness(
-            build_fn=spec.build_graph,
-            executor_factory=spec.make_executor,
+            build_fn=lambda: plan(evaluation.declaration),
+            executor_factory=spec.make_executor if spec else MockExecutor,
             scenario_name=record.scenario_name,
             n_runs=evaluation.robustness_runs,
             inputs=evaluation.inputs,
+            backend=evaluation.backend,
         ).success_rate
 
-    report = engine.evaluate(
+    return engine.evaluate(
         workflow_state=state,
         scenario_name=record.scenario_name,
-        max_budget_usd=evaluation.constraints.max_cost_usd,
-        max_latency_seconds=evaluation.constraints.max_latency_seconds,
         robustness_score=robustness,
+        constraints=evaluation.constraints,
     )
-    if status == "failed":
-        # A failed run produced no result: its speed and cost are no merit.
-        report.composite_score = 0.0
-        report.metadata["failed"] = True
 
+
+def _store_metrics(
+    db: Session, record: ExecutionModel, report: EvaluationReport
+) -> None:
     db.query(MetricModel).filter(MetricModel.execution_id == record.id).delete()
     db.add(
         MetricModel(
@@ -478,6 +556,7 @@ def _summary_fields(record: ExecutionModel) -> dict[str, Any]:
         "id": record.id,
         "task_id": record.task_id,
         "scenario_name": record.scenario_name,
+        "backend": record.backend,
         "status": record.status,
         "started_at": record.started_at.isoformat() if record.started_at else None,
         "completed_at": (

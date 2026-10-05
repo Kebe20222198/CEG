@@ -314,3 +314,101 @@ def test_resume_errors(client):
     completed_id = exec_res.json()["id"]
     assert client.post(f"/executions/{completed_id}/resume", json={}).status_code == 409
     assert client.post("/executions/invalid_exec_id/resume", json={}).status_code == 404
+
+
+# ── Backends, declarations and constraints ────────────────────────────────────
+
+
+def test_backends_endpoint(client: TestClient) -> None:
+    backends = {b["id"]: b for b in client.get("/backends").json()}
+    assert backends["langgraph"]["supports_hitl"] is True
+    assert backends["python"]["supports_hitl"] is False
+
+
+def test_same_task_runs_identically_on_both_backends(client: TestClient) -> None:
+    runs = {}
+    for backend in ("langgraph", "python"):
+        res = client.post(
+            "/tasks/analyse_ventes_alertes/execute",
+            json={"scenario_name": "scenario_b_single_anomaly", "backend": backend},
+        )
+        assert res.status_code == 200, res.text
+        data = res.json()
+        assert data["backend"] == backend
+        traces = client.get(f"/executions/{data['id']}/trace").json()
+        runs[backend] = (
+            data["status"],
+            data["total_cost"],
+            sorted((t["node_id"], t["model"]) for t in traces),
+        )
+    assert runs["langgraph"] == runs["python"]
+
+
+def test_hitl_task_on_a_backend_without_hitl_is_refused(client: TestClient) -> None:
+    before = len(client.get("/executions").json())
+    res = client.post(
+        "/tasks/validation_budget_hitl/execute", json={"backend": "python"}
+    )
+    assert res.status_code == 400
+    assert "human approval" in res.json()["detail"]
+    assert len(client.get("/executions").json()) == before
+
+
+def test_unknown_backend_is_refused(client: TestClient) -> None:
+    res = client.post("/tasks/analyse_ventes_alertes/execute", json={"backend": "x"})
+    assert res.status_code == 400
+
+
+def test_invalid_declarations_are_refused(client: TestClient) -> None:
+    res = client.post(
+        "/tasks",
+        json={
+            "objective": "o",
+            "tools_allowed": ["sql_query"],
+            "subtasks": [{"id": "a", "objective": "a", "tools": ["shell"]}],
+        },
+    )
+    assert res.status_code == 422
+    assert "tools_allowed" in res.json()["detail"]
+
+    _create_task(
+        client,
+        id="declared_task",
+        objective="o",
+        subtasks=[{"id": "a", "objective": "a"}],
+    )
+    bad_update = client.put(
+        "/tasks/declared_task",
+        json={"subtasks": [{"id": "b", "objective": "b", "run_if": "ghost.ok"}]},
+    )
+    assert bad_update.status_code == 422
+    # The stored declaration is unchanged.
+    subtasks = client.get("/tasks/declared_task").json()["subtasks"]
+    assert [st["id"] for st in subtasks] == ["a"]
+
+
+def test_quality_below_declared_minimum_fails_the_execution(
+    client: TestClient,
+) -> None:
+    _create_task(
+        client,
+        id="demanding_task",
+        objective="Tâche exigeante",
+        task_constraints={"min_quality_score": 0.95},
+        subtasks=[{"id": "write", "objective": "Rédiger"}],
+        evaluation_criteria=[
+            {
+                "name": "clarity",
+                "description": "Sortie claire",
+                "weight": 1.0,
+                "evaluation_prompt_template": "{output}",
+            }
+        ],
+    )
+    res = client.post("/tasks/demanding_task/execute", json={})
+    data = res.json()
+    # MockJudgeClient scores 0.90 < 0.95.
+    assert data["status"] == "failed"
+    assert "min_quality_score" in data["error"]
+    report = client.get(f"/executions/{data['id']}/metrics").json()["report"]
+    assert report["constraint_violations"]

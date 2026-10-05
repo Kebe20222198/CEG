@@ -217,6 +217,22 @@ export default function ExecutionDetail({
           >
             {detail.scenario_name}
           </span>
+
+          {detail.backend && (
+            <span
+              className="mono"
+              title="Execution backend"
+              style={{
+                fontSize: '0.75rem',
+                padding: '2px 8px',
+                borderRadius: '4px',
+                border: '1px solid var(--border-default)',
+                color: 'var(--accent-primary)',
+              }}
+            >
+              ⚙ {detail.backend}
+            </span>
+          )}
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>

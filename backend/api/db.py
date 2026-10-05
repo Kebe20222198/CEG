@@ -71,6 +71,8 @@ class ExecutionModel(Base):
     scenario_name: Mapped[str] = mapped_column(
         String, nullable=False, default="unnamed"
     )
+    # Execution backend that ran it (langgraph, python, ...).
+    backend: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(
         String, nullable=False, default="running", index=True
     )

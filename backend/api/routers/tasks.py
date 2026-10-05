@@ -18,9 +18,15 @@ from api.schemas import (
     TaskResponse,
     TaskUpdate,
 )
-from api.services import ExecutionRequestError, start_execution, to_detail
+from api.services import (
+    ExecutionRequestError,
+    cognitive_task_of,
+    start_execution,
+    to_detail,
+)
 from ceg.evaluation.models import Criterion
 from ceg.models.task import SubTask, TaskConstraint
+from ceg.planner import PlanningError, plan
 
 router = APIRouter(tags=["Tasks"])
 
@@ -70,6 +76,21 @@ def _check_pipeline(pipeline: str | None) -> None:
         )
 
 
+def _check_declaration(db: Session, model: TaskModel) -> None:
+    """Refuse a task whose declaration cannot be planned (HTTP 422).
+
+    Unknown dependencies, inconsistent conditions or tools outside
+    ``tools_allowed`` are rejected when the task is written, not when it runs.
+    """
+    try:
+        plan(cognitive_task_of(model))
+    except PlanningError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=422, detail=f"Déclaration invalide : {exc}"
+        ) from exc
+
+
 def _commit(db: Session) -> None:
     """Commit, leaving the session usable if the commit fails."""
     try:
@@ -117,6 +138,7 @@ def create_task(
         created_at=now,
         updated_at=now,
     )
+    _check_declaration(db, model)
     db.add(model)
     _commit(db)
     db.refresh(model)
@@ -172,6 +194,7 @@ def update_task(
         )
 
     model.updated_at = datetime.now(timezone.utc)
+    _check_declaration(db, model)
     _commit(db)
     db.refresh(model)
     return _model_to_response(model)

@@ -89,6 +89,14 @@ class ExecuteTaskRequest(BaseModel):
         default_factory=dict,
         description="Graph inputs, available to every node executor.",
     )
+    backend: str = Field(
+        default="langgraph",
+        description=(
+            "Execution backend (see GET /backends). The same task gives the "
+            "same results on every backend; human approval needs one that "
+            "supports it."
+        ),
+    )
     robustness_runs: int = Field(
         default=0,
         ge=0,
@@ -125,6 +133,7 @@ class ExecutionResponse(BaseModel):
     id: str
     task_id: str | None = None
     scenario_name: str
+    backend: str | None = None
     status: str
     started_at: str | None = None
     completed_at: str | None = None
@@ -213,6 +222,13 @@ class ModelInfo(BaseModel):
     estimated_cost: float
     estimated_latency_ms: float
     supported_capabilities: list[str]
+
+
+class BackendInfo(BaseModel):
+    """A registered execution backend."""
+
+    id: str
+    supports_hitl: bool
 
 
 class PipelineInfo(BaseModel):

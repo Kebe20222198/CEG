@@ -1,8 +1,10 @@
 """Registry of the pipeline templates a task can be executed with.
 
-A task names its template in ``TaskModel.pipeline``. Adding a pipeline means
-adding an entry to ``PIPELINES``; the routers do not change. A task without a
-template is executed as the graph described by its own subtasks.
+A template provides what a declaration cannot: the implementation of its
+sub-tasks (the executor), its quality criteria, and the declaration used to
+create the demo task. The graph itself always comes from the planner, from
+the task stored in the database. Adding a pipeline means adding an entry to
+``PIPELINES``; the routers do not change.
 """
 
 from __future__ import annotations
@@ -12,37 +14,36 @@ from dataclasses import dataclass, field
 
 from ceg.compiler.mock_executor import MockExecutor
 from ceg.evaluation.models import Criterion
-from ceg.models.graph import CEGGraph
-from ceg.models.node import CEGNode, ModelTierHint
-from ceg.models.task import SubTask
+from ceg.models.task import CognitiveTask
 from ceg.use_cases.demo_pipelines import (
     HITLBudgetExecutor,
     LoopReportExecutor,
     ParallelSalesExecutor,
-    build_hitl_budget_graph,
-    build_loop_report_graph,
-    build_parallel_sales_graph,
+    analyse_ventes_parallele,
+    redaction_rapport_iteratif,
+    validation_budget_hitl,
 )
 from ceg.use_cases.multi_agent_supervisor import (
     HierarchicalSupervisorExecutor,
-    build_hierarchical_supervisor_graph,
+    supervision_strategique,
 )
 from ceg.use_cases.sales_criteria import ALL_SALES_CRITERIA
-from ceg.use_cases.sales_pipeline import SalesExecutor, build_sales_graph
+from ceg.use_cases.sales_pipeline import SalesExecutor, analyse_ventes_alertes
 
 
 @dataclass(frozen=True)
 class PipelineSpec:
-    """How to build, run and judge one pipeline template.
+    """Implementation and evaluation of one pipeline template.
 
     Attributes:
-        build_graph: Returns a fresh CEGGraph.
+        declare: Returns the template's CognitiveTask (used to create and
+            refresh the demo task).
         make_executor: Returns a fresh executor (executors may hold state).
         criteria: Quality criteria for the Evaluation Engine.
         uses_csv: The pipeline reads ``inputs["csv_path"]``.
     """
 
-    build_graph: Callable[[], CEGGraph]
+    declare: Callable[[], CognitiveTask]
     make_executor: Callable[[], MockExecutor]
     criteria: list[Criterion] = field(default_factory=list)
     uses_csv: bool = False
@@ -50,53 +51,25 @@ class PipelineSpec:
 
 PIPELINES: dict[str, PipelineSpec] = {
     "analyse_ventes_alertes": PipelineSpec(
-        build_graph=build_sales_graph,
+        declare=analyse_ventes_alertes,
         make_executor=SalesExecutor,
         criteria=ALL_SALES_CRITERIA,
         uses_csv=True,
     ),
     "analyse_ventes_parallele": PipelineSpec(
-        build_graph=build_parallel_sales_graph,
+        declare=analyse_ventes_parallele,
         make_executor=ParallelSalesExecutor,
     ),
     "redaction_rapport_iteratif": PipelineSpec(
-        build_graph=build_loop_report_graph,
+        declare=redaction_rapport_iteratif,
         make_executor=LoopReportExecutor,
     ),
     "validation_budget_hitl": PipelineSpec(
-        build_graph=build_hitl_budget_graph,
+        declare=validation_budget_hitl,
         make_executor=HITLBudgetExecutor,
     ),
     "multi_agent_supervisor": PipelineSpec(
-        build_graph=build_hierarchical_supervisor_graph,
+        declare=supervision_strategique,
         make_executor=HierarchicalSupervisorExecutor,
     ),
 }
-
-
-def graph_from_subtasks(objective: str, subtasks: list[SubTask]) -> CEGGraph:
-    """Build the graph of a task without template: one node per subtask.
-
-    Dependencies come from ``SubTask.dependencies``. A task without subtasks
-    becomes a single node carrying the task objective.
-
-    Raises:
-        ValueError: If the subtasks do not form a valid DAG or name an
-            unknown model tier.
-    """
-    if not subtasks:
-        return CEGGraph(nodes=[CEGNode(id="main", objective=objective)])
-    return CEGGraph(
-        nodes=[
-            CEGNode(
-                id=st.id,
-                objective=st.objective,
-                required_capabilities=st.required_capabilities,
-                model_tier_hint=(
-                    ModelTierHint(st.model_tier_hint) if st.model_tier_hint else None
-                ),
-                dependencies=st.dependencies,
-            )
-            for st in subtasks
-        ]
-    )

@@ -306,6 +306,19 @@ export default function ExecutionList({ executions, onSelectExecution }) {
                       >
                         {exec.scenario_name}
                       </span>
+                      {exec.backend && (
+                        <span
+                          className="mono"
+                          title="Execution backend"
+                          style={{
+                            marginLeft: '6px',
+                            fontSize: '0.6875rem',
+                            color: 'var(--text-muted)',
+                          }}
+                        >
+                          ⚙ {exec.backend}
+                        </span>
+                      )}
                     </td>
 
                     <td style={{ padding: '12px 16px' }}>

@@ -43,6 +43,9 @@ export default function TaskExecutionModal({
   const [tasks, setTasks] = useState(DEFAULT_TASKS);
   const [selectedTaskId, setSelectedTaskId] = useState(DEFAULT_TASKS[0].id);
   const [scenarioName, setScenarioName] = useState(DEFAULT_TASKS[0].defaultScenario);
+  // Execution engine: the same task gives the same result on every backend.
+  const [backends, setBackends] = useState([{ id: 'langgraph', supports_hitl: true }]);
+  const [backend, setBackend] = useState('langgraph');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -55,6 +58,12 @@ export default function TaskExecutionModal({
             setTasks(data);
             setSelectedTaskId(data[0].id);
           }
+        })
+        .catch(() => { });
+      fetch(`${apiBaseUrl}/backends`)
+        .then((res) => res.ok && res.json())
+        .then((data) => {
+          if (data && data.length > 0) setBackends(data);
         })
         .catch(() => { });
     }
@@ -86,6 +95,7 @@ export default function TaskExecutionModal({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           scenario_name: scenarioName,
+          backend,
         }),
       });
 
@@ -245,6 +255,43 @@ export default function TaskExecutionModal({
                   outline: 'none',
                 }}
               />
+            </div>
+
+            <div>
+              <label
+                style={{
+                  fontSize: '0.6875rem',
+                  fontFamily: 'var(--font-mono)',
+                  color: 'var(--text-muted)',
+                  display: 'block',
+                  marginBottom: '6px',
+                  textTransform: 'uppercase',
+                }}
+              >
+                EXECUTION BACKEND
+              </label>
+              <select
+                value={backend}
+                onChange={(e) => setBackend(e.target.value)}
+                className="mono"
+                style={{
+                  width: '100%',
+                  padding: '9px 12px',
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'var(--bg-surface-elevated)',
+                  border: '1px solid var(--border-default)',
+                  color: 'var(--text-primary)',
+                  fontSize: '0.8125rem',
+                  outline: 'none',
+                }}
+              >
+                {backends.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.id}
+                    {b.supports_hitl ? '' : ' (no human approval)'}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div
