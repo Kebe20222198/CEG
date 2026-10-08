@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -97,6 +97,14 @@ class ExecuteTaskRequest(BaseModel):
             "supports it."
         ),
     )
+    optimizer: Literal["static", "learned"] = Field(
+        default="static",
+        description=(
+            "Model selection: 'static' uses the registry ratings, 'learned' "
+            "the statistics learned from previous executions (and updates "
+            "them)."
+        ),
+    )
     robustness_runs: int = Field(
         default=0,
         ge=0,
@@ -134,6 +142,7 @@ class ExecutionResponse(BaseModel):
     task_id: str | None = None
     scenario_name: str
     backend: str | None = None
+    optimizer: str | None = None
     status: str
     started_at: str | None = None
     completed_at: str | None = None
@@ -229,6 +238,14 @@ class BackendInfo(BaseModel):
 
     id: str
     supports_hitl: bool
+
+
+class OptimizerStatisticsResponse(BaseModel):
+    """What the learned optimiser knows, per (model, capability)."""
+
+    prior_weight: float
+    exploration: float
+    observations: list[dict[str, Any]]
 
 
 class PipelineInfo(BaseModel):

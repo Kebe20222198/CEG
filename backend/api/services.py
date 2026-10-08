@@ -50,6 +50,7 @@ from ceg.models.task import CognitiveTask, SubTask, TaskConstraint
 from ceg.planner import PlanningError, plan
 from ceg.runtime.decision_engine import RuntimeDecisionEngine
 from ceg.runtime.fallback import NodeAbortError
+from ceg.runtime.statistics import ModelStatistics
 
 FIXTURES_DIR = (Path(__file__).parent.parent / "tests" / "fixtures").resolve()
 
@@ -62,6 +63,35 @@ _SCENARIO_FIXTURES: list[tuple[tuple[str, ...], str]] = [
 _DEFAULT_FIXTURE = "scenario_b_single_anomaly.csv"
 
 CHECKPOINTER = MemorySaver()
+
+# Learned optimiser: statistics shared by every 'learned' execution, saved to
+# a JSON file so that what was learned survives a restart.
+STATISTICS_PATH = Path(
+    os.getenv(
+        "CEG_STATS_PATH",
+        str(Path(__file__).parent.parent / "model_statistics.json"),
+    )
+)
+
+
+def _load_statistics() -> ModelStatistics:
+    if STATISTICS_PATH.is_file():
+        return ModelStatistics.from_dict(json.loads(STATISTICS_PATH.read_text()))
+    return ModelStatistics(exploration=0.1)
+
+
+LEARNED_STATISTICS = _load_statistics()
+
+
+def _engine_for(optimizer: str | None) -> RuntimeDecisionEngine:
+    """Engine using the learned statistics, or the static ratings."""
+    statistics = LEARNED_STATISTICS if optimizer == "learned" else None
+    return RuntimeDecisionEngine(statistics=statistics)
+
+
+def save_statistics() -> None:
+    """Persist what the learned optimiser knows."""
+    STATISTICS_PATH.write_text(json.dumps(LEARNED_STATISTICS.to_dict(), indent=2))
 
 
 class ExecutionRequestError(ValueError):
@@ -220,7 +250,7 @@ def start_execution(
     # Compiling checks the plan against the backend and the constraints:
     # a request that cannot be honoured is refused before anything is stored.
     backend = _backend(payload.backend)
-    engine = RuntimeDecisionEngine()
+    engine = _engine_for(payload.optimizer)
     try:
         workflow = _compile(backend, graph, _executor_of(spec), engine)
     except ValueError as exc:
@@ -231,6 +261,7 @@ def start_execution(
         task_id=task.id,
         scenario_name=payload.scenario_name,
         backend=backend.name,
+        optimizer=payload.optimizer,
         status="running",
         started_at=_now(),
         graph_json=graph.model_dump_json(),
@@ -291,7 +322,7 @@ def resume_execution(
     spec = _pipeline_of(task)
     # The plan the execution started with, with its task and constraints.
     graph = CEGGraph.model_validate_json(record.graph_json or "{}")
-    engine = RuntimeDecisionEngine()
+    engine = _engine_for(record.optimizer)
     workflow = _compile(backend, graph, _executor_of(spec), engine)
 
     snapshot = workflow.get_state(record.id)
@@ -467,6 +498,8 @@ def _store_outcome(
         record.completed_at = _now()
         _store_metrics(db, record, report)
         workflow.discard(record.id)
+    if record.optimizer == "learned":
+        save_statistics()
 
     db.commit()
 
@@ -557,6 +590,7 @@ def _summary_fields(record: ExecutionModel) -> dict[str, Any]:
         "task_id": record.task_id,
         "scenario_name": record.scenario_name,
         "backend": record.backend,
+        "optimizer": record.optimizer,
         "status": record.status,
         "started_at": record.started_at.isoformat() if record.started_at else None,
         "completed_at": (

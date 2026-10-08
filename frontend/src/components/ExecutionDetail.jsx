@@ -231,6 +231,7 @@ export default function ExecutionDetail({
               }}
             >
               ⚙ {detail.backend}
+              {detail.optimizer ? ` · ${detail.optimizer}` : ''}
             </span>
           )}
         </div>

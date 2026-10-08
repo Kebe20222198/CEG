@@ -46,6 +46,8 @@ export default function TaskExecutionModal({
   // Execution engine: the same task gives the same result on every backend.
   const [backends, setBackends] = useState([{ id: 'langgraph', supports_hitl: true }]);
   const [backend, setBackend] = useState('langgraph');
+  // Model selection: static registry ratings, or statistics learned from runs.
+  const [optimizer, setOptimizer] = useState('static');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -96,6 +98,7 @@ export default function TaskExecutionModal({
         body: JSON.stringify({
           scenario_name: scenarioName,
           backend,
+          optimizer,
         }),
       });
 
@@ -291,6 +294,39 @@ export default function TaskExecutionModal({
                     {b.supports_hitl ? '' : ' (no human approval)'}
                   </option>
                 ))}
+              </select>
+            </div>
+
+            <div>
+              <label
+                style={{
+                  fontSize: '0.6875rem',
+                  fontFamily: 'var(--font-mono)',
+                  color: 'var(--text-muted)',
+                  display: 'block',
+                  marginBottom: '6px',
+                  textTransform: 'uppercase',
+                }}
+              >
+                MODEL OPTIMIZER
+              </label>
+              <select
+                value={optimizer}
+                onChange={(e) => setOptimizer(e.target.value)}
+                className="mono"
+                style={{
+                  width: '100%',
+                  padding: '9px 12px',
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'var(--bg-surface-elevated)',
+                  border: '1px solid var(--border-default)',
+                  color: 'var(--text-primary)',
+                  fontSize: '0.8125rem',
+                  outline: 'none',
+                }}
+              >
+                <option value="static">static (registry ratings)</option>
+                <option value="learned">learned (statistics from past runs)</option>
               </select>
             </div>
 

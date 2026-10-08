@@ -3,7 +3,13 @@
 from fastapi import APIRouter
 
 from api.pipelines import PIPELINES
-from api.schemas import BackendInfo, ModelInfo, PipelineInfo
+from api.schemas import (
+    BackendInfo,
+    ModelInfo,
+    OptimizerStatisticsResponse,
+    PipelineInfo,
+)
+from api.services import LEARNED_STATISTICS
 from ceg.backends import available_backends
 from ceg.runtime.decision_engine import DEFAULT_MODEL_REGISTRY
 
@@ -49,3 +55,17 @@ def list_pipelines() -> list[PipelineInfo]:
         )
         for name, spec in PIPELINES.items()
     ]
+
+
+@router.get(
+    "/optimizer/statistics",
+    response_model=OptimizerStatisticsResponse,
+    summary="Ce que l'optimiseur appris sait des modèles",
+)
+def optimizer_statistics() -> OptimizerStatisticsResponse:
+    """Observations par (modèle, capacité) : appels, taux de succès, qualité."""
+    return OptimizerStatisticsResponse(
+        prior_weight=LEARNED_STATISTICS.prior_weight,
+        exploration=LEARNED_STATISTICS.exploration,
+        observations=LEARNED_STATISTICS.summary(),
+    )

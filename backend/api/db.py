@@ -73,6 +73,8 @@ class ExecutionModel(Base):
     )
     # Execution backend that ran it (langgraph, python, ...).
     backend: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Model selection: static registry ratings or learned statistics.
+    optimizer: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(
         String, nullable=False, default="running", index=True
     )

@@ -4,6 +4,7 @@ The database is a temporary file (see conftest.py) seeded with the demo
 tasks on application startup.
 """
 
+import os
 from collections.abc import Iterator
 from typing import Any
 
@@ -412,3 +413,42 @@ def test_quality_below_declared_minimum_fails_the_execution(
     assert "min_quality_score" in data["error"]
     report = client.get(f"/executions/{data['id']}/metrics").json()["report"]
     assert report["constraint_violations"]
+
+
+# ── Learned optimiser ─────────────────────────────────────────────────────────
+
+
+def test_learned_optimizer_is_used_and_keeps_learning(client: TestClient) -> None:
+    before = client.get("/optimizer/statistics").json()["observations"]
+    calls_before = sum(row["n"] for row in before)
+
+    res = client.post(
+        "/tasks/analyse_ventes_alertes/execute",
+        json={"scenario_name": "scenario_b_single_anomaly", "optimizer": "learned"},
+    )
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert data["optimizer"] == "learned"
+
+    traces = client.get(f"/executions/{data['id']}/trace").json()
+    decisions = [t["decision"] for t in traces if t["decision"]]
+    assert decisions
+    assert all(d["quality_source"] == "learned" for d in decisions)
+
+    after = client.get("/optimizer/statistics").json()["observations"]
+    assert sum(row["n"] for row in after) > calls_before
+
+    assert os.path.isfile(os.environ["CEG_STATS_PATH"])
+
+
+def test_static_optimizer_is_the_default(client: TestClient) -> None:
+    res = client.post(
+        "/tasks/analyse_ventes_alertes/execute",
+        json={"scenario_name": "scenario_a_normal"},
+    )
+    data = res.json()
+    assert data["optimizer"] == "static"
+    traces = client.get(f"/executions/{data['id']}/trace").json()
+    assert all(
+        t["decision"]["quality_source"] == "static" for t in traces if t["decision"]
+    )
