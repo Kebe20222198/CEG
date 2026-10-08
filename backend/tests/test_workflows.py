@@ -161,3 +161,38 @@ class TestWorkflowsApi:
 
     def test_unknown_workflow(self, client: TestClient) -> None:
         assert client.get("/workflows/ghost").status_code == 404
+
+
+class TestGrid:
+    def test_grid_has_one_column_per_run_and_one_row_per_step(
+        self, client: TestClient
+    ) -> None:
+        for scenario in ("scenario_a_normal", "scenario_b_single_anomaly"):
+            client.post(
+                "/tasks/analyse_ventes_alertes/execute",
+                json={"scenario_name": scenario},
+            )
+        grid = client.get("/workflows/analyse_ventes_alertes/grid?limit=2").json()
+        assert len(grid["runs"]) == 2
+        rows = {row["node_id"]: row["statuses"] for row in grid["rows"]}
+        assert list(rows)[:5] == [
+            "fetch_data",
+            "aggregate_region",
+            "compute_trend",
+            "detect_anomaly",
+            "generate_alert",
+        ]
+        # Oldest run first: scenario A skips the alert, scenario B sends it.
+        assert rows["generate_alert"] == ["skipped", "completed"]
+
+    def test_paused_runs_show_the_step_awaiting_approval(
+        self, client: TestClient
+    ) -> None:
+        client.post("/tasks/validation_budget_hitl/execute", json={})
+        grid = client.get("/workflows/validation_budget_hitl/grid?limit=1").json()
+        rows = {row["node_id"]: row["statuses"] for row in grid["rows"]}
+        assert rows["validation_manager"] == ["awaiting_approval"]
+        assert rows["decaisser_fonds"] == [None]
+
+    def test_unknown_workflow(self, client: TestClient) -> None:
+        assert client.get("/workflows/ghost/grid").status_code == 404

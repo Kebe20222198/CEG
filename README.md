@@ -96,7 +96,7 @@ CEG/
 ├── backend/                  # API REST FastAPI & Moteur CEG Core
 │   ├── api/                  # Routes REST, service d'exécution, modèles SQLAlchemy, schémas
 │   ├── src/ceg/              # Framework CEG (planificateur, backends, runtime, évaluation)
-│   ├── tests/                # Suite de 426 tests automatisés (pytest)
+│   ├── tests/                # Suite de 429 tests automatisés (pytest)
 │   └── pyproject.toml        # Configuration Python, dépendances, linters
 │
 ├── frontend/                 # Application Web React 19 + Vite (Dev-Tool Studio)
@@ -169,7 +169,7 @@ npm run dev
 
 ```bash
 cd backend
-pytest                      # 426 tests (base SQLite temporaire, jamais ceg.db)
+pytest                      # 429 tests (base SQLite temporaire, jamais ceg.db)
 ruff check . && ruff format --check .
 mypy                        # mode strict sur src/, api/ et tests/
 
@@ -260,9 +260,21 @@ state = workflow.resume("run-1", value=True)    # False ou {"approved": False} p
 
 ---
 
-## 🗂️ Workflows comme code (vue « Workflows » du Studio)
+## 🖥️ CEG Studio
 
-Comme la liste des DAGs et l'onglet **Code** d'Airflow, l'onglet **Workflows** du Studio liste tous les workflows de la plateforme — modèle, nombre d'étapes, contraintes, backends capables de les exécuter, nombre d'exécutions, taux de succès, dernière exécution — et montre pour chacun :
+L'interface s'organise comme celle d'Airflow : une barre latérale (**Workflows**, **Exécutions**, **À approuver**, **Comparer**, **Tendances**, **Modèles & optimiseur**), un fil d'Ariane, et une URL par vue (`#/workflows/tri_tickets_support/grid`, `#/runs/exec_…/timeline`) que l'on peut partager ou mettre en favori. Thème clair ou sombre.
+
+| Page | Contenu |
+|---|---|
+| **Workflows** | Tous les workflows : étapes, contraintes, backends capables de les exécuter, historique, fichiers en erreur, bouton Run |
+| **Un workflow** | Onglets **Grille** (exécutions × étapes, une case colorée par statut), **Graphe**, **Code**, **Source**, **Exécutions**, **Détails** |
+| **Une exécution** | Onglets **Graphe & trace** (modèle choisi et pourquoi, fallbacks, sorties), **Chronologie** (Gantt reconstruit à partir du plan et des latences : les branches parallèles se chevauchent, le chemin critique apparaît), **État (JSON)** |
+| **À approuver** | Toutes les exécutions en pause sur une approbation humaine, avec la question posée et les boutons Approuver / Rejeter |
+| **Modèles & optimiseur** | Registre des modèles, backends et leurs capacités, statistiques de l'optimiseur appris |
+
+### Workflows comme code
+
+Pour chaque workflow, les onglets Graphe, Code, Source et Déclaration montrent :
 
 | Vue | Contenu |
 |---|---|
@@ -518,6 +530,7 @@ CEG expose l'ensemble de ses fonctionnalités via une **API REST FastAPI 0.110+*
 | `GET` | `/optimizer/statistics` | Ce que l'optimiseur appris sait des modèles |
 | `GET` | `/workflows` | Liste des workflows (contraintes, backends compatibles, historique) |
 | `GET` | `/workflows/{id}` | Code d'un workflow : déclaration Python générée, sources, plan |
+| `GET` | `/workflows/{id}/grid` | Statut de chaque étape dans les dernières exécutions (vue Grille) |
 | `GET` | `/workflows/errors` | Fichiers de workflow qui n'ont pas pu être chargés |
 | `POST` | `/workflows/refresh` | Relire le dossier des workflows |
 | `GET` | `/pipelines` | Modèles de pipeline utilisables par une tâche |

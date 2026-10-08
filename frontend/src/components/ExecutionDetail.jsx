@@ -16,6 +16,7 @@ export default function ExecutionDetail({
   onBack,
   onRunNew,
   apiBaseUrl,
+  embedded = false,
 }) {
   const currentExecId = executionId || executions[0]?.id;
   const [detail, setDetail] = useState(null);
@@ -175,7 +176,8 @@ export default function ExecutionDetail({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
 
-      {/* ── Top Bar with back button & execution summary ── */}
+      {/* ── Top Bar (hidden when a page already shows the run's header) ── */}
+      {!embedded && (
       <div
         style={{
           display: 'flex',
@@ -257,6 +259,7 @@ export default function ExecutionDetail({
           </div>
         </div>
       </div>
+      )}
 
       {/* ── HITL Action Banner if execution is paused for approval ── */}
       {hasHITLInterruption && (

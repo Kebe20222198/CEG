@@ -293,6 +293,32 @@ class WorkflowRefreshResponse(BaseModel):
     errors: list[WorkflowImportError]
 
 
+class GridRun(BaseModel):
+    """A column of the grid: one execution."""
+
+    id: str
+    status: str
+    started_at: str | None = None
+    backend: str | None = None
+    optimizer: str | None = None
+    total_cost: float
+    total_latency_ms: float
+
+
+class GridRow(BaseModel):
+    """A row of the grid: one step, its status in each execution (or None)."""
+
+    node_id: str
+    statuses: list[str | None]
+
+
+class WorkflowGrid(BaseModel):
+    """Executions × steps, like Airflow's Grid view (oldest run first)."""
+
+    runs: list[GridRun]
+    rows: list[GridRow]
+
+
 class SourceFile(BaseModel):
     """An excerpt of the Python source implementing a workflow."""
 

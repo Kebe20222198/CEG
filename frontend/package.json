@@ -13,7 +13,6 @@
     "@xyflow/react": "^12.11.3",
     "dagre": "^0.8.5",
     "lucide-react": "^1.29.0",
-    "mermaid": "^11.16.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "recharts": "^3.10.1"

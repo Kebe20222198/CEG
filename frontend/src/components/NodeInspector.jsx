@@ -399,7 +399,9 @@ export default function NodeInspector({
         )}
 
         {/* Fallbacks Triggered if any */}
-        {traceInfo?.fallbacks_triggered && (
+        {(Array.isArray(traceInfo?.fallbacks_triggered)
+          ? traceInfo.fallbacks_triggered.length > 0
+          : Boolean(traceInfo?.fallbacks_triggered)) && (
           <div
             style={{
               padding: '10px 12px',

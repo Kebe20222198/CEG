@@ -1,261 +1,219 @@
 import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
-import Navbar from './components/Navbar';
+import {
+  Workflow,
+  ListChecks,
+  UserCheck,
+  GitCompare,
+  BarChart2,
+  Cpu,
+  Play,
+  Sun,
+  Moon,
+  BookOpen,
+} from 'lucide-react';
+import './studio.css';
+import ErrorBoundary from './components/ErrorBoundary';
 import ExecutionList from './components/ExecutionList';
-import ExecutionDetail from './components/ExecutionDetail';
-import FlowGraph from './components/FlowGraph';
-import NodeInspector from './components/NodeInspector';
-// Loaded on demand: the Trends view pulls in recharts, Compare a second graph.
+import TaskExecutionModal from './components/TaskExecutionModal';
+import WorkflowsPage from './pages/WorkflowsPage';
+import ApprovalsPage from './pages/ApprovalsPage';
+import ModelsPage from './pages/ModelsPage';
+import { API_BASE_URL, apiGet } from './api';
+import { href, navigate, useRoute } from './router';
+
+// Loaded on demand: the graph (React Flow) and charts (recharts) are heavy.
+const WorkflowPage = lazy(() => import('./pages/WorkflowPage'));
+const RunPage = lazy(() => import('./pages/RunPage'));
 const ExecutionCompare = lazy(() => import('./components/ExecutionCompare'));
 const TrendsView = lazy(() => import('./components/TrendsView'));
-const WorkflowsView = lazy(() => import('./components/WorkflowsView'));
-import TaskExecutionModal from './components/TaskExecutionModal';
-import ErrorBoundary from './components/ErrorBoundary';
 
-// Set VITE_API_URL (e.g. in frontend/.env.local) to target another backend.
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const NAV = [
+  { section: 'Plateforme' },
+  { path: '/workflows', label: 'Workflows', icon: Workflow },
+  { path: '/runs', label: 'Exécutions', icon: ListChecks },
+  { path: '/approvals', label: 'À approuver', icon: UserCheck, badge: 'approvals' },
+  { section: 'Analyse' },
+  { path: '/compare', label: 'Comparer', icon: GitCompare },
+  { path: '/trends', label: 'Tendances', icon: BarChart2 },
+  { path: '/models', label: 'Modèles & optimiseur', icon: Cpu },
+];
+
+function readTheme() {
+  try {
+    return localStorage.getItem('ceg-theme') || 'dark';
+  } catch {
+    return 'dark';
+  }
+}
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('dashboard');
-  const [healthStatus, setHealthStatus] = useState(null);
+  const { segments } = useRoute();
   const [executions, setExecutions] = useState([]);
-  const [selectedExecId, setSelectedExecId] = useState(null);
-  const [selectedExecDetail, setSelectedExecDetail] = useState(null);
-  const [selectedGraphNodeId, setSelectedGraphNodeId] = useState(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  // Workflow preselected when "Run" is clicked in the Workflows view.
+  const [health, setHealth] = useState(null);
+  const [theme, setTheme] = useState(readTheme);
+  const [modalOpen, setModalOpen] = useState(false);
   const [modalTaskId, setModalTaskId] = useState(null);
 
-  const openRunModal = (taskId = null) => {
-    setModalTaskId(taskId);
-    setIsModalOpen(true);
-  };
-  const [loading, setLoading] = useState(true);
-
-  // Fetch executions list
-  const fetchExecutions = useCallback(() => {
-    fetch(`${API_BASE_URL}/executions`)
-      .then((res) => res.json())
-      .then((data) => {
-        setExecutions(data);
-        if (data.length > 0) {
-          setSelectedExecId((prev) => prev ?? data[0].id);
-        }
-        setLoading(false);
-      })
-      .catch((err) => {
-        console.error('API fetch error:', err);
-        setLoading(false);
-      });
+  const loadExecutions = useCallback(() => {
+    apiGet('/executions').then(setExecutions).catch(() => setExecutions([]));
   }, []);
 
   useEffect(() => {
-    fetch(`${API_BASE_URL}/health`)
-      .then((res) => res.json())
-      .then((data) => setHealthStatus(data.status))
-      .catch(() => setHealthStatus('disconnected'));
-
-    fetchExecutions();
-  }, [fetchExecutions]);
-
-  // Fetch full detail whenever selectedExecId changes or executions first load
-  const activeExecId = selectedExecId || (executions.length > 0 ? executions[0].id : null);
+    loadExecutions();
+    apiGet('/health').then(setHealth).catch(() => setHealth({ status: 'down' }));
+  }, [loadExecutions]);
 
   useEffect(() => {
-    if (activeExecId) {
-      fetch(`${API_BASE_URL}/executions/${activeExecId}`)
-        .then((res) => {
-          if (!res.ok) throw new Error('Execution detail not found');
-          return res.json();
-        })
-        .then((data) => {
-          setSelectedExecDetail(data);
-          if (data?.graph?.nodes?.length > 0) {
-            setSelectedGraphNodeId((prev) => prev ?? data.graph.nodes[0].id);
-          }
-        })
-        .catch((err) => console.error(err));
+    document.documentElement.dataset.theme = theme;
+    try {
+      localStorage.setItem('ceg-theme', theme);
+    } catch {
+      // storage unavailable: the theme just isn't remembered
     }
-  }, [activeExecId]);
+  }, [theme]);
 
-  const handleSelectExecution = (execId) => {
-    setSelectedExecId(execId);
-    setActiveTab('detail');
+  const openRun = (taskId = null) => {
+    setModalTaskId(taskId);
+    setModalOpen(true);
   };
 
-  const handleExecutionCreated = (newExec) => {
-    setSelectedExecId(newExec.id);
-    fetchExecutions();
-    setActiveTab('detail');
+  const onExecutionCreated = (execution) => {
+    loadExecutions();
+    navigate(`/runs/${execution.id}`);
   };
 
-  const selectedGraphNodeObj = selectedExecDetail?.graph?.nodes?.find(
-    (n) => n.id === selectedGraphNodeId
-  );
-  const selectedGraphRawOutput =
-    selectedExecDetail?.workflow_state?.node_outputs?.[selectedGraphNodeId];
+  const [section = 'workflows', id, tab] = segments;
+  const pendingApprovals = executions.filter((e) => e.status === 'awaiting_approval').length;
+
+  // ── Breadcrumbs ──
+  const crumbs = [];
+  const sectionLabels = {
+    workflows: 'Workflows',
+    runs: 'Exécutions',
+    approvals: 'À approuver',
+    compare: 'Comparer',
+    trends: 'Tendances',
+    models: 'Modèles & optimiseur',
+  };
+  crumbs.push({ label: sectionLabels[section] || section, path: `/${section}` });
+  if (id) crumbs.push({ label: id, path: `/${section}/${id}` });
+
+  // ── Page ──
+  let page;
+  if (section === 'workflows' && id) {
+    page = <WorkflowPage workflowId={id} tab={tab} onRun={openRun} />;
+  } else if (section === 'workflows') {
+    page = <WorkflowsPage onRun={openRun} />;
+  } else if (section === 'runs' && id) {
+    page = <RunPage runId={id} tab={tab} onRunNew={() => openRun()} />;
+  } else if (section === 'runs') {
+    page = (
+      <>
+        <div className="page-header">
+          <div>
+            <h1 className="page-title">Exécutions</h1>
+            <p className="page-subtitle">Toutes les exécutions, de tous les workflows.</p>
+          </div>
+        </div>
+        <ExecutionList executions={executions} onSelectExecution={(runId) => navigate(`/runs/${runId}`)} />
+      </>
+    );
+  } else if (section === 'approvals') {
+    page = <ApprovalsPage onChanged={loadExecutions} />;
+  } else if (section === 'compare') {
+    page = <ExecutionCompare executions={executions} apiBaseUrl={API_BASE_URL} />;
+  } else if (section === 'trends') {
+    page = <TrendsView executions={executions} apiBaseUrl={API_BASE_URL} />;
+  } else if (section === 'models') {
+    page = <ModelsPage />;
+  } else {
+    page = <div className="empty">Page introuvable. <a href={href('/workflows')}>Revenir aux workflows</a></div>;
+  }
+
+  const healthState = health === null ? '' : health.status === 'ok' ? 'ok' : 'down';
 
   return (
-    <div className="app-container">
-      {/* Dev-Tool Top Navbar */}
-      <Navbar
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        healthStatus={healthStatus}
-        onRunClick={() => openRunModal()}
-      />
+    <div className="studio">
+      <aside className="sidebar">
+        <div className="sidebar-brand">
+          <div className="sidebar-logo">CEG</div>
+          <div>
+            <div className="sidebar-title">CEG Studio</div>
+            <div className="sidebar-subtitle">Cognitive Execution Graph</div>
+          </div>
+        </div>
 
-      {/* Main Viewport Content */}
-      <main className="main-content">
-        <ErrorBoundary>
-          <Suspense fallback={<div className="mono">Loading view…</div>}>
-          {loading ? (
-            <div
-              className="ide-window"
-              style={{
-                padding: '60px',
-                textAlign: 'center',
-                fontFamily: 'var(--font-mono)',
-                color: 'var(--text-muted)',
-                fontSize: '0.875rem',
-              }}
-            >
-              // Connecting to CEG Runtime (FastAPI + SQLite)...
-            </div>
+        {NAV.map((item) =>
+          item.section ? (
+            <div className="sidebar-section" key={item.section}>{item.section}</div>
           ) : (
-            <div className="view-transition">
-              {/* Tab 1: Dashboard */}
-              {activeTab === 'dashboard' && (
-                <ExecutionList
-                  executions={executions}
-                  onSelectExecution={handleSelectExecution}
-                  onRunNew={() => openRunModal()}
-                />
+            <a
+              key={item.path}
+              href={href(item.path)}
+              className={`nav-link ${`/${section}` === item.path ? 'active' : ''}`}
+            >
+              <item.icon size={16} />
+              {item.label}
+              {item.badge === 'approvals' && pendingApprovals > 0 && (
+                <span className="nav-badge">{pendingApprovals}</span>
               )}
+            </a>
+          )
+        )}
 
-              {/* Tab 2: Flow Canvas (Dedicated Graph Studio) */}
-              {activeTab === 'graph' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                  {/* Selector Bar */}
-                  <div
-                    className="ide-window"
-                    style={{
-                      padding: '12px 18px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <span
-                        style={{
-                          fontSize: '0.6875rem',
-                          fontFamily: 'var(--font-mono)',
-                          color: 'var(--text-muted)',
-                          textTransform: 'uppercase',
-                        }}
-                      >
-                        SELECT EXECUTION
-                      </span>
-                      <select
-                        value={activeExecId || ''}
-                        onChange={(e) => setSelectedExecId(e.target.value)}
-                        className="mono"
-                        style={{
-                          padding: '6px 12px',
-                          borderRadius: 'var(--radius-sm)',
-                          background: 'var(--bg-surface-elevated)',
-                          border: '1px solid var(--border-default)',
-                          color: 'var(--text-primary)',
-                          fontSize: '0.8125rem',
-                          outline: 'none',
-                        }}
-                      >
-                        {executions.map((e) => (
-                          <option key={e.id} value={e.id}>
-                            {e.scenario_name} ({e.id}) — {e.status}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+        <div className="sidebar-footer">
+          <div className="health">
+            <span className={`health-dot ${healthState}`} />
+            API {healthState === 'ok' ? 'connectée' : healthState === 'down' ? 'injoignable' : '…'}
+            {health?.version && <span className="dim mono">v{health.version}</span>}
+          </div>
+          <a className="nav-link" href={`${API_BASE_URL}/docs`} target="_blank" rel="noreferrer">
+            <BookOpen size={15} /> Documentation de l'API
+          </a>
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+          >
+            {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+            Thème {theme === 'dark' ? 'clair' : 'sombre'}
+          </button>
+        </div>
+      </aside>
 
-                    {selectedExecDetail && (
-                      <span className={`status-pill ${selectedExecDetail.status}`}>
-                        <span className="status-pill-dot" />
-                        <span>{selectedExecDetail.status}</span>
-                      </span>
-                    )}
-                  </div>
+      <div className="main">
+        <header className="topbar">
+          <nav className="breadcrumbs">
+            <a href={href('/workflows')}>CEG</a>
+            {crumbs.map((c, i) => (
+              <React.Fragment key={c.path}>
+                <span className="dim">/</span>
+                {i === crumbs.length - 1 ? (
+                  <span className="current">{c.label}</span>
+                ) : (
+                  <a href={href(c.path)}>{c.label}</a>
+                )}
+              </React.Fragment>
+            ))}
+          </nav>
+          <div className="topbar-actions">
+            <button className="btn btn-primary" onClick={() => openRun(section === 'workflows' ? id : null)}>
+              <Play size={14} /> Exécuter un workflow
+            </button>
+          </div>
+        </header>
 
-                  {/* Studio Split Canvas */}
-                  <div
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'minmax(0, 1.4fr) minmax(320px, 1fr)',
-                      gap: '16px',
-                      minHeight: '560px',
-                    }}
-                  >
-                    <FlowGraph
-                      graphData={selectedExecDetail?.graph}
-                      nodeStatuses={selectedExecDetail?.workflow_state?.node_statuses || {}}
-                      selectedNodeId={selectedGraphNodeId}
-                      onNodeSelect={setSelectedGraphNodeId}
-                      title={`CEG Graph Canvas // ${selectedExecDetail?.scenario_name || 'Idle'}`}
-                      height="560px"
-                    />
+        <main className="content">
+          <ErrorBoundary>
+            <Suspense fallback={<div className="empty">Chargement…</div>}>{page}</Suspense>
+          </ErrorBoundary>
+        </main>
+      </div>
 
-                    <NodeInspector
-                      selectedNode={selectedGraphNodeObj}
-                      rawOutput={selectedGraphRawOutput}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Tab 3: Trace & State (Execution Detail) */}
-              {activeTab === 'detail' && (
-                <ExecutionDetail
-                  executionId={activeExecId}
-                  executions={executions}
-                  onSelectExecution={setSelectedExecId}
-                  onBack={() => setActiveTab('dashboard')}
-                  onRunNew={() => openRunModal()}
-                  apiBaseUrl={API_BASE_URL}
-                />
-              )}
-
-              {/* Workflows: list + code, like Airflow's DAG list and Code view */}
-              {activeTab === 'workflows' && (
-                <WorkflowsView apiBaseUrl={API_BASE_URL} onRun={openRunModal} />
-              )}
-
-              {/* Tab 4: Diff Compare */}
-              {activeTab === 'compare' && (
-                <ExecutionCompare
-                  executions={executions}
-                  apiBaseUrl={API_BASE_URL}
-                />
-              )}
-
-              {/* Tab 5: Analytics & Trends */}
-              {activeTab === 'trends' && (
-                <TrendsView
-                  executions={executions}
-                  apiBaseUrl={API_BASE_URL}
-                />
-              )}
-            </div>
-          )}
-          </Suspense>
-        </ErrorBoundary>
-      </main>
-
-      {/* Modal Dialog */}
       <TaskExecutionModal
-        isOpen={isModalOpen}
+        isOpen={modalOpen}
         initialTaskId={modalTaskId}
-        onClose={() => setIsModalOpen(false)}
-        onExecutionCreated={handleExecutionCreated}
+        onClose={() => setModalOpen(false)}
+        onExecutionCreated={onExecutionCreated}
         apiBaseUrl={API_BASE_URL}
       />
     </div>

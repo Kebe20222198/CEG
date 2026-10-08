@@ -10,17 +10,21 @@ pipeline template, and the plan the planner derives from it.
 from __future__ import annotations
 
 import inspect
+import json
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from langgraph.checkpoint.memory import MemorySaver
 from sqlalchemy.orm import Session
 
 from api.db import ExecutionModel, TaskModel, get_db
 from api.pipelines import REGISTRY, WORKFLOWS_DIR, display_path, pipelines
 from api.schemas import (
+    GridRow,
+    GridRun,
     SourceFile,
     WorkflowDetail,
+    WorkflowGrid,
     WorkflowImportError,
     WorkflowRefreshResponse,
     WorkflowRun,
@@ -108,6 +112,76 @@ def get_workflow(id: str, db: Session = Depends(get_db)) -> WorkflowDetail:
         plan=graph.model_dump(exclude={"task"}) if graph else None,
         sources=_sources(task.pipeline),
     )
+
+
+@router.get(
+    "/workflows/{id}/grid",
+    response_model=WorkflowGrid,
+    summary="Grille exécutions × étapes",
+)
+def workflow_grid(
+    id: str,
+    limit: int = Query(25, ge=1, le=200),
+    db: Session = Depends(get_db),
+) -> WorkflowGrid:
+    """Statut de chaque étape dans les dernières exécutions (vue Grille)."""
+    task = db.get(TaskModel, id)
+    if task is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workflow '{id}' non trouvé.",
+        )
+    runs = (
+        db.query(ExecutionModel)
+        .filter(ExecutionModel.task_id == id)
+        .order_by(ExecutionModel.started_at.desc())
+        .limit(limit)
+        .all()
+    )[::-1]
+
+    node_ids: list[str] = []
+    try:
+        node_ids = [n.id for n in plan(cognitive_task_of(task)).nodes]
+    except PlanningError:
+        pass
+    statuses_by_run = [_step_statuses(run) for run in runs]
+    for statuses in statuses_by_run:
+        node_ids += [n for n in statuses if n not in node_ids]
+
+    return WorkflowGrid(
+        runs=[
+            GridRun(
+                id=run.id,
+                status=run.status,
+                started_at=run.started_at.isoformat() if run.started_at else None,
+                backend=run.backend,
+                optimizer=run.optimizer,
+                total_cost=run.total_cost,
+                total_latency_ms=run.total_latency_ms,
+            )
+            for run in runs
+        ],
+        rows=[
+            GridRow(
+                node_id=node_id,
+                statuses=[statuses.get(node_id) for statuses in statuses_by_run],
+            )
+            for node_id in node_ids
+        ],
+    )
+
+
+def _step_statuses(run: ExecutionModel) -> dict[str, str]:
+    """Final status of each top-level step of a run (from its trace)."""
+    state = json.loads(run.workflow_state_json or "{}")
+    statuses: dict[str, str] = {}
+    for entry in state.get("execution_log", []):
+        if not entry.get("subgraph_parent"):
+            statuses[entry["node_id"]] = entry.get("status", "completed")
+    if run.status == "awaiting_approval":
+        for pending in state.get("pending_approvals", []):
+            statuses.setdefault(pending.get("node_id", ""), "awaiting_approval")
+    return statuses
 
 
 def _summary(
