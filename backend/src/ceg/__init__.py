@@ -37,6 +37,7 @@ from ceg.models.node import (
 )
 from ceg.models.task import CognitiveTask, RepeatSpec, SubTask, TaskConstraint
 from ceg.planner import PlanningError, plan
+from ceg.registry import WorkflowDefinition, WorkflowRegistry, workflow
 from ceg.runtime.decision_engine import (
     DEFAULT_MODEL_REGISTRY,
     Constraint,
@@ -65,6 +66,10 @@ __all__ = [
     "available_backends",
     "get_backend",
     "plan",
+    # Workflows as files
+    "WorkflowDefinition",
+    "WorkflowRegistry",
+    "workflow",
     # Compiler
     "CEGCompiler",
     "CEGState",

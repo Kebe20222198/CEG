@@ -14,38 +14,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime
-from typing import Any, TypeVar
+from typing import Any
 
 from ceg.compiler.compiler import CEGCompiler
 from ceg.compiler.mock_executor import ExecutionError, ExecutionResult, MockExecutor
 from ceg.models.graph import CEGGraph
 from ceg.models.task import CognitiveTask, SubTask, TaskConstraint
 from ceg.planner import plan
-
-# ── Minimal SDK decorator ─────────────────────────────────────────────────────
-
-
-_TaskFn = TypeVar("_TaskFn", bound=Callable[..., Any])
-
-
-class _CEGRegistry:
-    """Minimal task registry supporting the @ceg.task() decorator pattern."""
-
-    def __init__(self) -> None:
-        self._tasks: dict[str, Callable[..., Any]] = {}
-
-    def task(self) -> Callable[[_TaskFn], _TaskFn]:
-        """Decorator that registers the decorated function as a CEG task."""
-
-        def decorator(fn: _TaskFn) -> _TaskFn:
-            self._tasks[fn.__name__] = fn
-            return fn
-
-        return decorator
-
-
-ceg = _CEGRegistry()
-
+from ceg.registry import workflow
+from ceg.use_cases.sales_criteria import ALL_SALES_CRITERIA
 
 # ── SalesExecutor ─────────────────────────────────────────────────────────────
 
@@ -107,7 +84,7 @@ class SalesExecutor(MockExecutor):
 # ── Task definition (SDK declarative style) ───────────────────────────────────
 
 
-@ceg.task()
+@workflow(executor=SalesExecutor, criteria=ALL_SALES_CRITERIA, uses_csv=True)
 def analyse_ventes_alertes() -> CognitiveTask:
     """Définition déclarative du pipeline d'analyse des ventes et alertes."""
     return CognitiveTask(

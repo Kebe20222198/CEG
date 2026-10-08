@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
 from api.db import init_db
-from api.routers import benchmark, executions, health, models, tasks
+from api.routers import benchmark, executions, health, models, tasks, workflows
 from api.seed import seed_database
 from ceg import __version__
 
@@ -59,6 +59,7 @@ app.include_router(tasks.router)
 app.include_router(executions.router)
 app.include_router(benchmark.router)
 app.include_router(models.router)
+app.include_router(workflows.router)
 
 
 @app.get("/", include_in_schema=False)

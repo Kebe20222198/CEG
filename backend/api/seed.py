@@ -28,7 +28,7 @@ from api.db import (
     TraceModel,
     init_db,
 )
-from api.pipelines import PIPELINES
+from api.pipelines import pipelines
 from api.schemas import ExecuteTaskRequest
 from api.services import ExecutionRequestError, start_execution
 
@@ -72,20 +72,24 @@ DEMOS: list[tuple[str, str, ExecuteTaskRequest]] = [
 ]
 
 
-def _ensure_tasks(db: Session) -> None:
-    """Create the demo tasks, or refresh them from their declaration.
+def sync_workflows(db: Session) -> None:
+    """Create or refresh a task for every discovered workflow.
 
-    The declaration is the source of truth: a demo task always holds the
-    sub-tasks its pipeline implements.
+    Like Airflow syncing its DAG files to its database: the workflow file is
+    the source of truth, so the stored declaration is refreshed from it.
     """
-    for task_id, display_name, _ in DEMOS:
-        declaration = PIPELINES[task_id].declare()
-        task = db.get(TaskModel, task_id)
+    names = {task_id: name for task_id, name, _ in DEMOS}
+    for workflow_id, definition in pipelines().items():
+        declaration = definition.declare()
+        task = db.get(TaskModel, workflow_id)
         if task is None:
-            task = TaskModel(id=task_id, name=display_name)
+            task = TaskModel(
+                id=workflow_id,
+                name=names.get(workflow_id) or definition.description or workflow_id,
+            )
             db.add(task)
-            print(f"✓ Task '{task_id}' créée en base.")
-        task.pipeline = task_id
+            print(f"✓ Workflow '{workflow_id}' enregistré.")
+        task.pipeline = workflow_id
         task.objective = declaration.objective
         task.task_constraints_json = (
             declaration.task_constraints.model_dump_json()
@@ -117,7 +121,7 @@ def seed_database(force: bool = False, reset: bool = False) -> None:
     init_db()
     db = SessionLocal()
     try:
-        _ensure_tasks(db)
+        sync_workflows(db)
         if reset:
             _reset_executions(db)
 

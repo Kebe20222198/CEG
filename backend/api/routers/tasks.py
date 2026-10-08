@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from api.db import TaskModel, get_db
-from api.pipelines import PIPELINES
+from api.pipelines import pipelines
 from api.schemas import (
     ExecuteTaskRequest,
     ExecutionDetailResponse,
@@ -67,11 +67,11 @@ def _get_task_or_404(db: Session, task_id: str) -> TaskModel:
 
 
 def _check_pipeline(pipeline: str | None) -> None:
-    if pipeline is not None and pipeline not in PIPELINES:
+    if pipeline is not None and pipeline not in pipelines():
         raise HTTPException(
             status_code=422,
             detail=(
-                f"Pipeline inconnu '{pipeline}'. Disponibles : {sorted(PIPELINES)}."
+                f"Pipeline inconnu '{pipeline}'. Disponibles : {sorted(pipelines())}."
             ),
         )
 

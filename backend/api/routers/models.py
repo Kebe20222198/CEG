@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from api.pipelines import PIPELINES
+from api.pipelines import pipelines
 from api.schemas import (
     BackendInfo,
     ModelInfo,
@@ -53,7 +53,7 @@ def list_pipelines() -> list[PipelineInfo]:
             uses_csv=spec.uses_csv,
             criteria=[c.name for c in spec.criteria],
         )
-        for name, spec in PIPELINES.items()
+        for name, spec in pipelines().items()
     ]
 
 

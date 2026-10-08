@@ -34,7 +34,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from sqlalchemy.orm import Session
 
 from api.db import ExecutionModel, MetricModel, TaskModel, TraceModel
-from api.pipelines import PIPELINES, PipelineSpec
+from api.pipelines import PipelineSpec, pipelines
 from api.schemas import (
     ExecuteTaskRequest,
     ExecutionDetailResponse,
@@ -144,7 +144,7 @@ def resolve_csv_path(payload: ExecuteTaskRequest) -> str:
 def _pipeline_of(task: TaskModel) -> PipelineSpec | None:
     if task.pipeline is None:
         return None
-    spec = PIPELINES.get(task.pipeline)
+    spec = pipelines().get(task.pipeline)
     if spec is None:
         raise ExecutionRequestError(f"Unknown pipeline '{task.pipeline}'.")
     return spec
@@ -159,7 +159,7 @@ def cognitive_task_of(task: TaskModel) -> CognitiveTask:
     gets the defaults: every task the API runs has a budget and a latency
     limit.
     """
-    spec = PIPELINES.get(task.pipeline) if task.pipeline else None
+    spec = pipelines().get(task.pipeline) if task.pipeline else None
     template = spec.declare() if spec is not None else None
 
     subtasks = [
@@ -241,7 +241,8 @@ def start_execution(
         raise ExecutionRequestError(f"Invalid task declaration: {exc}") from exc
     criteria = _criteria_of(task, spec)
 
-    inputs = dict(payload.inputs)
+    # A run without inputs uses the workflow's default inputs.
+    inputs = dict(payload.inputs or (spec.default_inputs if spec else {}))
     if spec is not None and spec.uses_csv:
         inputs["csv_path"] = resolve_csv_path(payload)
     elif payload.csv_path:
@@ -336,7 +337,10 @@ def resume_execution(
         raise ExecutionStateError(record.error or "")
 
     # The budget already spent before the pause still counts.
-    engine.spend(float(snapshot.values.get("total_cost", 0.0)))
+    engine.spend(
+        float(snapshot.values.get("total_cost", 0.0)),
+        float(snapshot.values.get("total_latency_ms", 0.0)),
+    )
 
     decision: dict[str, Any] = {**(payload.value or {}), "approved": payload.approved}
     if payload.comment:

@@ -34,8 +34,15 @@ const DEFAULT_TASKS = [
   },
 ];
 
+// Scenario proposed by default for a task (sales scenario B otherwise).
+function defaultScenarioFor(taskId) {
+  const known = DEFAULT_TASKS.find((t) => t.id === taskId);
+  return known ? known.defaultScenario : 'scenario_b_single_anomaly';
+}
+
 export default function TaskExecutionModal({
   isOpen,
+  initialTaskId,
   onClose,
   onExecutionCreated,
   apiBaseUrl,
@@ -58,7 +65,11 @@ export default function TaskExecutionModal({
         .then((data) => {
           if (data && data.length > 0) {
             setTasks(data);
-            setSelectedTaskId(data[0].id);
+            const pick = data.some((t) => t.id === initialTaskId)
+              ? initialTaskId
+              : data[0].id;
+            setSelectedTaskId(pick);
+            setScenarioName(defaultScenarioFor(pick));
           }
         })
         .catch(() => { });
@@ -69,21 +80,13 @@ export default function TaskExecutionModal({
         })
         .catch(() => { });
     }
-  }, [isOpen, apiBaseUrl]);
+  }, [isOpen, apiBaseUrl, initialTaskId]);
 
   if (!isOpen) return null;
 
   const handleTaskChange = (newTaskId) => {
     setSelectedTaskId(newTaskId);
-    if (newTaskId === 'analyse_ventes_parallele') {
-      setScenarioName('multi_region_q1_parallel');
-    } else if (newTaskId === 'redaction_rapport_iteratif') {
-      setScenarioName('rapport_strategique_iteratif');
-    } else if (newTaskId === 'validation_budget_hitl') {
-      setScenarioName('demande_gpu_cloud_hitl');
-    } else {
-      setScenarioName('scenario_b_single_anomaly');
-    }
+    setScenarioName(defaultScenarioFor(newTaskId));
   };
 
   const handleSubmit = async (e) => {

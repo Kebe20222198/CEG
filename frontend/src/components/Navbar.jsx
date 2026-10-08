@@ -6,6 +6,7 @@ import {
   GitPullRequest,
   BarChart2,
   Play,
+  Workflow,
 } from 'lucide-react';
 
 export default function Navbar({
@@ -16,6 +17,7 @@ export default function Navbar({
 }) {
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: Layers },
+    { id: 'workflows', label: 'Workflows', icon: Workflow },
     { id: 'graph', label: 'Flow Canvas', icon: GitCommit },
     { id: 'detail', label: 'Trace & State', icon: Activity },
     { id: 'compare', label: 'Diff Compare', icon: GitPullRequest },

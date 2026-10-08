@@ -248,6 +248,75 @@ class OptimizerStatisticsResponse(BaseModel):
     observations: list[dict[str, Any]]
 
 
+class WorkflowRun(BaseModel):
+    """The last execution of a workflow."""
+
+    id: str
+    status: str
+    started_at: str | None = None
+
+
+class WorkflowSummary(BaseModel):
+    """A workflow as listed on the platform (like Airflow's DAG list)."""
+
+    id: str
+    name: str | None = None
+    objective: str
+    pipeline: str | None = None
+    source_file: str | None = Field(
+        default=None, description="File declaring the workflow (repository path)."
+    )
+    steps: int
+    constraints: TaskConstraint
+    tools_allowed: list[str]
+    requires_approval: bool
+    backends: list[str] = Field(description="Backends able to run it as declared.")
+    valid: bool = Field(description="False if the declaration cannot be planned.")
+    error: str | None = None
+    runs: int
+    success_rate: float | None = None
+    last_run: WorkflowRun | None = None
+
+
+class WorkflowImportError(BaseModel):
+    """A workflow file that could not be loaded (like Airflow's Broken DAG)."""
+
+    file: str
+    error: str
+
+
+class WorkflowRefreshResponse(BaseModel):
+    """Result of re-scanning the workflows folder."""
+
+    folder: str
+    workflows: int
+    errors: list[WorkflowImportError]
+
+
+class SourceFile(BaseModel):
+    """An excerpt of the Python source implementing a workflow."""
+
+    title: str
+    path: str
+    start_line: int
+    code: str
+
+
+class WorkflowDetail(WorkflowSummary):
+    """A workflow with its code, like Airflow's Code view."""
+
+    python_code: str = Field(
+        description="The declaration as runnable Python (generated)."
+    )
+    declaration: dict[str, Any]
+    plan: dict[str, Any] | None = Field(
+        description="The execution graph produced by the planner."
+    )
+    sources: list[SourceFile] = Field(
+        description="Source files of the pipeline template, if any."
+    )
+
+
 class PipelineInfo(BaseModel):
     """A registered pipeline template."""
 

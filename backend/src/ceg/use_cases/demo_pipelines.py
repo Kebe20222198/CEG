@@ -15,10 +15,12 @@ from ceg.compiler.mock_executor import ExecutionError, ExecutionResult, MockExec
 from ceg.models.graph import CEGGraph
 from ceg.models.task import CognitiveTask, RepeatSpec, SubTask, TaskConstraint
 from ceg.planner import plan
+from ceg.registry import workflow
 
 # ── 1. Parallel Pipeline (Fan-out / Fan-in) ──────────────────────────────────
 
 
+@workflow(executor=lambda: ParallelSalesExecutor())
 def analyse_ventes_parallele() -> CognitiveTask:
     """Déclaration : analyse multi-régions avec alerte conditionnelle.
 
@@ -163,6 +165,7 @@ class ParallelSalesExecutor(MockExecutor):
 # ── 2. Iterative Refinement Loop Pipeline (EdgeType.LOOP) ────────────────────
 
 
+@workflow(executor=lambda: LoopReportExecutor())
 def redaction_rapport_iteratif() -> CognitiveTask:
     """Déclaration : rapport rédigé puis critiqué, révisé au plus 3 fois."""
     return CognitiveTask(
@@ -274,6 +277,7 @@ class LoopReportExecutor(MockExecutor):
 # ── 3. Human-in-the-Loop Pipeline (HITL) ─────────────────────────────────────
 
 
+@workflow(executor=lambda: HITLBudgetExecutor())
 def validation_budget_hitl() -> CognitiveTask:
     """Déclaration : aucun décaissement sans validation humaine."""
     return CognitiveTask(

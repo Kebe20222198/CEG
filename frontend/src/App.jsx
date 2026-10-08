@@ -7,6 +7,7 @@ import NodeInspector from './components/NodeInspector';
 // Loaded on demand: the Trends view pulls in recharts, Compare a second graph.
 const ExecutionCompare = lazy(() => import('./components/ExecutionCompare'));
 const TrendsView = lazy(() => import('./components/TrendsView'));
+const WorkflowsView = lazy(() => import('./components/WorkflowsView'));
 import TaskExecutionModal from './components/TaskExecutionModal';
 import ErrorBoundary from './components/ErrorBoundary';
 
@@ -21,6 +22,13 @@ export default function App() {
   const [selectedExecDetail, setSelectedExecDetail] = useState(null);
   const [selectedGraphNodeId, setSelectedGraphNodeId] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  // Workflow preselected when "Run" is clicked in the Workflows view.
+  const [modalTaskId, setModalTaskId] = useState(null);
+
+  const openRunModal = (taskId = null) => {
+    setModalTaskId(taskId);
+    setIsModalOpen(true);
+  };
   const [loading, setLoading] = useState(true);
 
   // Fetch executions list
@@ -93,7 +101,7 @@ export default function App() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         healthStatus={healthStatus}
-        onRunClick={() => setIsModalOpen(true)}
+        onRunClick={() => openRunModal()}
       />
 
       {/* Main Viewport Content */}
@@ -120,7 +128,7 @@ export default function App() {
                 <ExecutionList
                   executions={executions}
                   onSelectExecution={handleSelectExecution}
-                  onRunNew={() => setIsModalOpen(true)}
+                  onRunNew={() => openRunModal()}
                 />
               )}
 
@@ -211,9 +219,14 @@ export default function App() {
                   executions={executions}
                   onSelectExecution={setSelectedExecId}
                   onBack={() => setActiveTab('dashboard')}
-                  onRunNew={() => setIsModalOpen(true)}
+                  onRunNew={() => openRunModal()}
                   apiBaseUrl={API_BASE_URL}
                 />
+              )}
+
+              {/* Workflows: list + code, like Airflow's DAG list and Code view */}
+              {activeTab === 'workflows' && (
+                <WorkflowsView apiBaseUrl={API_BASE_URL} onRun={openRunModal} />
               )}
 
               {/* Tab 4: Diff Compare */}
@@ -240,6 +253,7 @@ export default function App() {
       {/* Modal Dialog */}
       <TaskExecutionModal
         isOpen={isModalOpen}
+        initialTaskId={modalTaskId}
         onClose={() => setIsModalOpen(false)}
         onExecutionCreated={handleExecutionCreated}
         apiBaseUrl={API_BASE_URL}

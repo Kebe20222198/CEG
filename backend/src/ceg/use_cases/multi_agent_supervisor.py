@@ -15,6 +15,7 @@ from ceg.compiler.mock_executor import ExecutionError, ExecutionResult, MockExec
 from ceg.models.graph import CEGGraph
 from ceg.models.task import CognitiveTask, RepeatSpec, SubTask, TaskConstraint
 from ceg.planner import plan, plan_subtasks
+from ceg.registry import workflow
 
 # ── Team 1: Research Team ────────────────────────────────────────────────────
 
@@ -108,6 +109,9 @@ def build_analytics_team_subgraph() -> CEGGraph:
 # ── Top-Level Hierarchical Multi-Agent Task ──────────────────────────────────
 
 
+@workflow(
+    id="multi_agent_supervisor", executor=lambda: HierarchicalSupervisorExecutor()
+)
 def supervision_strategique() -> CognitiveTask:
     """Déclaration : un superviseur délègue à deux équipes autonomes.
 

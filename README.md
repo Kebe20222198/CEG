@@ -8,6 +8,51 @@ C'est, à peu près, ce que fait **SQL** pour les bases de données relationnell
 
 ---
 
+## 🧭 Utiliser CEG : le parcours
+
+Comme avec Airflow, un workflow est **un fichier Python déposé dans un dossier** ; la plateforme le découvre, le valide, l'exécute et le montre.
+
+**1. Écrire le workflow** dans `workflows/` (exemple complet : [`workflows/tri_tickets_support.py`](workflows/tri_tickets_support.py)) :
+
+```python
+from ceg import CognitiveTask, SubTask, TaskConstraint, workflow
+
+@workflow(executor=EtapesTickets, default_inputs={"tickets": [...]})
+def tri_tickets_support() -> CognitiveTask:
+    """Trier les tickets du support, escalader les urgences, résumer la journée."""
+    return CognitiveTask(
+        objective="Classer les tickets, escalader les urgences, rédiger une synthèse.",
+        task_constraints=TaskConstraint(max_cost_usd=0.10, max_latency_seconds=5),
+        tools_allowed=["ticketing_api", "pager"],
+        subtasks=[
+            SubTask(id="lire_tickets", objective="Lire les tickets", tools=["ticketing_api"]),
+            SubTask(id="classer", objective="Classer", dependencies=["lire_tickets"]),
+            SubTask(id="detecter_urgences", objective="Repérer les urgences",
+                    dependencies=["lire_tickets"], model_tier_hint="quality"),
+            SubTask(id="escalader", objective="Prévenir l'astreinte", tools=["pager"],
+                    run_if="detecter_urgences.a_des_urgences"),
+            SubTask(id="rediger_synthese", objective="Résumer",
+                    dependencies=["classer", "detecter_urgences"]),
+        ],
+    )
+```
+
+Le fichier contient la **déclaration** (quoi faire, sous quelles contraintes) et l'**exécuteur** (`EtapesTickets`, une méthode `run` qui réalise chaque étape — c'est là que se branche un LLM).
+
+**2. Le vérifier et l'essayer** dans le terminal (après `pip install -e "backend[dev]"`) :
+
+```bash
+ceg list                                 # workflows trouvés, fichiers en erreur
+ceg validate tri_tickets_support         # plan, contraintes, backends acceptés — sans exécuter
+ceg show tri_tickets_support             # le workflow sous forme de code
+ceg run tri_tickets_support              # exécution + trace nœud par nœud
+ceg run validation_budget_hitl --approve ask   # les approbations se font dans le terminal
+```
+
+**3. Le piloter dans le Studio** : `ceg studio` lance l'API et le Studio. Dans l'onglet **Workflows**, le nouveau fichier apparaît sans redémarrage, avec son graphe, son code, ses sources et le bouton **Run** ; un fichier qui ne se charge pas est signalé en rouge avec son erreur, comme un « Broken DAG ».
+
+---
+
 ## 🧩 Architecture : déclarer → planifier → optimiser → exécuter
 
 | SQL | CEG | Où |
@@ -47,10 +92,11 @@ Les nœuds sont exécutés par des **exécuteurs** (protocole `Executor`) : c'es
 
 ```text
 CEG/
+├── workflows/                # Les workflows des utilisateurs (un fichier = un workflow)
 ├── backend/                  # API REST FastAPI & Moteur CEG Core
 │   ├── api/                  # Routes REST, service d'exécution, modèles SQLAlchemy, schémas
 │   ├── src/ceg/              # Framework CEG (planificateur, backends, runtime, évaluation)
-│   ├── tests/                # Suite de 380 tests automatisés (pytest)
+│   ├── tests/                # Suite de 426 tests automatisés (pytest)
 │   └── pyproject.toml        # Configuration Python, dépendances, linters
 │
 ├── frontend/                 # Application Web React 19 + Vite (Dev-Tool Studio)
@@ -83,6 +129,8 @@ python -m uvicorn api.main:app --reload --port 8000
 - Swagger UI : [http://localhost:8000/docs](http://localhost:8000/docs)
 - Health check : [http://localhost:8000/health](http://localhost:8000/health)
 
+Ou, en une commande : `ceg studio` (API + Studio).
+
 Au premier démarrage, l'API crée les tables et ensemence la base avec les tâches de démonstration et une exécution par type de flux. Pour régénérer ces exécutions :
 
 ```bash
@@ -111,6 +159,7 @@ npm run dev
 | `CEG_CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Origines autorisées à appeler l'API depuis un navigateur |
 | `CEG_SEED` | `1` | `0` désactive l'ensemencement au démarrage |
 | `CEG_DATA_DIR` | — | Dossier supplémentaire où l'API peut lire des CSV (`csv_path`) |
+| `CEG_WORKFLOWS_DIR` | `workflows/` (racine du dépôt) | Dossier des fichiers de workflow |
 | `CEG_STATS_PATH` | `backend/model_statistics.json` | Statistiques de l'optimiseur appris (conservées entre redémarrages) |
 | `VITE_API_URL` | `http://localhost:8000` | URL de l'API pour le frontend (ex. dans `frontend/.env.local`) |
 
@@ -120,7 +169,7 @@ npm run dev
 
 ```bash
 cd backend
-pytest                      # 380 tests (base SQLite temporaire, jamais ceg.db)
+pytest                      # 426 tests (base SQLite temporaire, jamais ceg.db)
 ruff check . && ruff format --check .
 mypy                        # mode strict sur src/, api/ et tests/
 
@@ -143,7 +192,7 @@ Le **Runtime Decision Engine** intervient dynamiquement à chaque nœud du graph
    - Le modèle choisi est **transmis à l'exécuteur** : le coût et la latence enregistrés sont ceux de ce modèle.
    - La décision (modèle, score, candidats, budget restant) est enregistrée dans `execution_log[*].decision`.
 
-2. **Suivre le budget et la latence transverses** (`budget_total`, `max_total_latency_ms`). Le budget est remis à zéro à chaque `invoke()` (une exécution = un budget) et conservé lors d'un `resume()`. Ni le budget ni la latence cumulée ne sont jamais dépassés : quand plus aucun modèle ne tient, seule une exécution dégradée qui tient encore est tentée, sinon le nœud est abandonné. Si **aucun modèle ne possède les capacités** demandées, le nœud est refusé — jamais exécuté sur un modèle incapable.
+2. **Suivre le budget et la latence transverses** (`budget_total`, `max_total_latency_ms`). Le budget est remis à zéro à chaque `invoke()` (une exécution = un budget) et conservé lors d'un `resume()`. Avant chaque appel, le coût et la latence estimés sont **réservés de façon atomique** : des branches qui s'exécutent en parallèle ne peuvent pas dépenser deux fois le même reste de budget, et un sous-graphe compte ce que son parent a déjà consommé. Ni le budget ni la latence cumulée ne sont jamais dépassés : quand plus aucun modèle ne tient, seule une exécution dégradée qui tient encore est tentée, sinon le nœud est abandonné. Si **aucun modèle ne possède les capacités** demandées, le nœud est refusé — jamais exécuté sur un modèle incapable.
 
 Chaque appel, **réussi ou raté**, est facturé : un appel LLM qui échoue coûte quand même et prend du temps. Le coût et la latence d'un nœud incluent ses appels ratés (`execution_log[*].failed_calls`).
 
@@ -208,6 +257,21 @@ workflow = get_backend("langgraph").compile(graph, checkpointer=MemorySaver())
 state = workflow.invoke(thread_id="run-1")      # s'arrête avant le nœud à approuver
 state = workflow.resume("run-1", value=True)    # False ou {"approved": False} pour rejeter
 ```
+
+---
+
+## 🗂️ Workflows comme code (vue « Workflows » du Studio)
+
+Comme la liste des DAGs et l'onglet **Code** d'Airflow, l'onglet **Workflows** du Studio liste tous les workflows de la plateforme — modèle, nombre d'étapes, contraintes, backends capables de les exécuter, nombre d'exécutions, taux de succès, dernière exécution — et montre pour chacun :
+
+| Vue | Contenu |
+|---|---|
+| **Graphe** | Le plan produit par le planificateur, sans avoir à l'exécuter |
+| **Code** | La déclaration écrite en Python (`ceg.codegen.task_to_python`), générée depuis ce qui s'exécute réellement ; elle existe donc aussi pour les workflows créés via l'API. Exécuter ce code reconstruit exactement la même déclaration |
+| **Source** | Les fichiers Python du modèle de pipeline : la fonction de déclaration et la classe de l'exécuteur, avec chemin et numéros de ligne |
+| **Déclaration (JSON)** | La déclaration stockée |
+
+Chaque ligne a un bouton **Run** qui ouvre l'exécution avec ce workflow présélectionné.
 
 ---
 
@@ -452,6 +516,10 @@ CEG expose l'ensemble de ses fonctionnalités via une **API REST FastAPI 0.110+*
 | `GET` | `/models` | Modèles (simulés) du registre du Runtime Decision Engine |
 | `GET` | `/backends` | Backends d'exécution et leurs capacités |
 | `GET` | `/optimizer/statistics` | Ce que l'optimiseur appris sait des modèles |
+| `GET` | `/workflows` | Liste des workflows (contraintes, backends compatibles, historique) |
+| `GET` | `/workflows/{id}` | Code d'un workflow : déclaration Python générée, sources, plan |
+| `GET` | `/workflows/errors` | Fichiers de workflow qui n'ont pas pu être chargés |
+| `POST` | `/workflows/refresh` | Relire le dossier des workflows |
 | `GET` | `/pipelines` | Modèles de pipeline utilisables par une tâche |
 | `GET` | `/health` | État du système et statut SQLite |
 
@@ -479,7 +547,10 @@ backend/
 │   └── routers/          ← Endpoints (tasks, executions, benchmark, models, health)
 ├── src/ceg/
 │   ├── models/           ← CognitiveTask (déclaration), CEGNode, CEGGraph (plan)
+│   ├── registry.py       ← @workflow et découverte du dossier workflows/
+│   ├── cli.py            ← commande ceg (list, validate, show, run, studio)
 │   ├── planner.py        ← CognitiveTask → CEGGraph
+│   ├── codegen.py        ← CognitiveTask → code Python lisible (vue Code)
 │   ├── backends/         ← interface Backend, backends langgraph et python, logique commune
 │   ├── compiler/         ← CEG → LangGraph, état, exécuteurs
 │   ├── runtime/          ← Runtime Decision Engine, fallbacks, statistiques apprises

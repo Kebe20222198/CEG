@@ -425,7 +425,13 @@ function FlowInner({
   // Use ref signature check to prevent infinite re-render cycles
   const prevSignatureRef = React.useRef('');
   React.useEffect(() => {
-    const signature = `${graphData?.id || ''}_${(graphData?.nodes || []).length}_${JSON.stringify(nodeStatuses)}`;
+    // Node ids and edges identify the graph: graphs have no id of their own,
+    // and two different graphs can have the same number of nodes.
+    const shape = JSON.stringify([
+      (graphData?.nodes || []).map((n) => n.id),
+      (graphData?.edges || []).map((e) => [e.source, e.target, e.edge_type]),
+    ]);
+    const signature = `${shape}_${JSON.stringify(nodeStatuses)}`;
     if (prevSignatureRef.current !== signature) {
       prevSignatureRef.current = signature;
       setNodes(initialNodes);
