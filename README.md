@@ -50,7 +50,7 @@ CEG/
 ├── backend/                  # API REST FastAPI & Moteur CEG Core
 │   ├── api/                  # Routes REST, service d'exécution, modèles SQLAlchemy, schémas
 │   ├── src/ceg/              # Framework CEG (planificateur, backends, runtime, évaluation)
-│   ├── tests/                # Suite de 357 tests automatisés (pytest)
+│   ├── tests/                # Suite de 380 tests automatisés (pytest)
 │   └── pyproject.toml        # Configuration Python, dépendances, linters
 │
 ├── frontend/                 # Application Web React 19 + Vite (Dev-Tool Studio)
@@ -111,6 +111,7 @@ npm run dev
 | `CEG_CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Origines autorisées à appeler l'API depuis un navigateur |
 | `CEG_SEED` | `1` | `0` désactive l'ensemencement au démarrage |
 | `CEG_DATA_DIR` | — | Dossier supplémentaire où l'API peut lire des CSV (`csv_path`) |
+| `CEG_STATS_PATH` | `backend/model_statistics.json` | Statistiques de l'optimiseur appris (conservées entre redémarrages) |
 | `VITE_API_URL` | `http://localhost:8000` | URL de l'API pour le frontend (ex. dans `frontend/.env.local`) |
 
 ---
@@ -119,7 +120,7 @@ npm run dev
 
 ```bash
 cd backend
-pytest                      # 357 tests (base SQLite temporaire, jamais ceg.db)
+pytest                      # 380 tests (base SQLite temporaire, jamais ceg.db)
 ruff check . && ruff format --check .
 mypy                        # mode strict sur src/, api/ et tests/
 
@@ -143,6 +144,8 @@ Le **Runtime Decision Engine** intervient dynamiquement à chaque nœud du graph
    - La décision (modèle, score, candidats, budget restant) est enregistrée dans `execution_log[*].decision`.
 
 2. **Suivre le budget et la latence transverses** (`budget_total`, `max_total_latency_ms`). Le budget est remis à zéro à chaque `invoke()` (une exécution = un budget) et conservé lors d'un `resume()`. Ni le budget ni la latence cumulée ne sont jamais dépassés : quand plus aucun modèle ne tient, seule une exécution dégradée qui tient encore est tentée, sinon le nœud est abandonné. Si **aucun modèle ne possède les capacités** demandées, le nœud est refusé — jamais exécuté sur un modèle incapable.
+
+Chaque appel, **réussi ou raté**, est facturé : un appel LLM qui échoue coûte quand même et prend du temps. Le coût et la latence d'un nœud incluent ses appels ratés (`execution_log[*].failed_calls`).
 
 3. **Orchestrer les 5 stratégies de fallback** (`FallbackOrchestrator`) en cas d'échec d'exécution. Les stratégies réellement tentées sont enregistrées dans `execution_log[*].fallbacks_triggered` (ou dans `NodeAbortError.fallbacks_triggered`) :
    - **Retry** : Réessaie le même modèle jusqu'à $N$ tentatives.
@@ -205,6 +208,49 @@ workflow = get_backend("langgraph").compile(graph, checkpointer=MemorySaver())
 state = workflow.invoke(thread_id="run-1")      # s'arrête avant le nœud à approuver
 state = workflow.resume("run-1", value=True)    # False ou {"approved": False} pour rejeter
 ```
+
+---
+
+## 🧠 Optimiseur appris
+
+Les notes de qualité, coûts et latences du registre de modèles sont des **suppositions**. L'optimiseur appris (`ModelStatistics`, `ceg/runtime/statistics.py`) les remplace par ce que les exécutions ont réellement montré, comme un SGBD s'appuie sur les statistiques de ses tables :
+
+- **qualité** observée par (modèle, capacité), un appel raté comptant pour 0 ;
+- **taux de succès** : un modèle qui échoue souvent coûte et prend plus de temps qu'annoncé ; le coût et la latence attendus sont ceux d'un résultat *réussi* (`coût / taux de succès`) ;
+- **moyenne bayésienne** entre la valeur statique (a priori, qui vaut `prior_weight` observations) et les observations : un modèle jamais utilisé garde sa note statique, les preuves prennent le relais progressivement ;
+- **exploration déterministe** (bonus de type UCB) : un modèle peu observé reçoit un bonus qui décroît avec les observations, sans tirage aléatoire — une décision reste reproductible et explicable.
+
+Le moteur apprend de **chaque appel** (succès, échecs, retries, escalades ; pas des exécutions dégradées), et la trace indique la source de la décision (`decision.quality_source` : `static` ou `learned`, avec `expected_quality` et `observations`).
+
+```python
+from ceg import RuntimeDecisionEngine, get_backend, plan
+from ceg.runtime.statistics import ModelStatistics
+
+stats = ModelStatistics(exploration=0.1)          # partagé entre les exécutions
+engine = RuntimeDecisionEngine(statistics=stats)
+get_backend("langgraph").compile(plan(task), engine=engine).invoke()
+stats.to_dict()                                   # à sauvegarder (from_dict pour recharger)
+```
+
+### Expérience : optimiseur statique vs appris
+
+```bash
+cd backend/src
+python -m ceg.experiments.learned_optimizer --runs 40
+```
+
+L'expérience exécute 40 fois une tâche d'analyse en 5 étapes, **sans indication de tier** (l'optimiseur décide seul), dans un environnement simulé (`ceg/simulation.py`) où la qualité réelle des modèles diffère des notes statiques. Les mesures viennent de la « vérité » du simulateur, que l'optimiseur ne voit jamais. Résultats (seed 0, identiques sur les backends `langgraph` et `python`) :
+
+| Stratégie | Coût / exécution | Latence | Appels ratés | Qualité livrée |
+|---|---|---|---|---|
+| Statique | 0,0285 $ | 858 ms | 4,22 | 0,718 |
+| Appris | 0,0207 $ (−27 %) | 549 ms (−36 %) | 0,38 (−91 %) | 0,716 |
+
+À chaque exécution, l'optimiseur statique confie la détection d'anomalies à `fast-mini`, qui échoue quatre fois avant que l'escalade ne passe la main à `balanced-standard`. L'optimiseur appris l'apprend en une exécution et choisit directement `balanced-standard` : même qualité, moins cher et plus rapide.
+
+> **Hypothèses de simulation.** Les qualités « réelles » (`SIMULATED_TRUTH`) sont inventées pour que l'a priori soit faux. L'expérience montre que l'optimiseur **corrige un a priori erroné** ; elle ne dit rien de la façon dont de vrais modèles se comparent. Avec un vrai LLM, le signal de qualité (`ExecutionResult.confidence`) devra venir d'un juge ou d'une vérité terrain.
+
+Dans l'API, `POST /tasks/{id}/execute` accepte `optimizer: "learned"` ; les statistiques sont partagées par toutes les exécutions « learned », sauvegardées dans `CEG_STATS_PATH`, et consultables via `GET /optimizer/statistics`.
 
 ---
 
@@ -405,6 +451,7 @@ CEG expose l'ensemble de ses fonctionnalités via une **API REST FastAPI 0.110+*
 | `GET` | `/benchmark/{id}/results` | Résultats du benchmark (Stub) |
 | `GET` | `/models` | Modèles (simulés) du registre du Runtime Decision Engine |
 | `GET` | `/backends` | Backends d'exécution et leurs capacités |
+| `GET` | `/optimizer/statistics` | Ce que l'optimiseur appris sait des modèles |
 | `GET` | `/pipelines` | Modèles de pipeline utilisables par une tâche |
 | `GET` | `/health` | État du système et statut SQLite |
 
@@ -412,7 +459,7 @@ CEG expose l'ensemble de ses fonctionnalités via une **API REST FastAPI 0.110+*
 
 - Une tâche stockée est une **déclaration** : à chaque exécution elle est planifiée (`plan`), puis compilée sur le backend demandé. Une déclaration invalide est refusée dès `POST`/`PUT /tasks` (422).
 - Une tâche peut s'appuyer sur un **modèle de pipeline** (champ `pipeline`, `GET /pipelines`) qui fournit les exécuteurs et les critères de qualité. Sans sous-tâches propres, elle reprend celles du modèle.
-- `POST /tasks/{id}/execute` accepte `scenario_name`, `inputs` (entrées du graphe), `backend` (`langgraph` par défaut), `csv_path` (pipelines CSV uniquement, limité aux données d'exemple et à `CEG_DATA_DIR`) et `robustness_runs` (0 par défaut : robustesse non mesurée). Un backend qui ne peut pas honorer la tâche (ex. approbation humaine sur `python`) est refusé (400) avant toute exécution.
+- `POST /tasks/{id}/execute` accepte `scenario_name`, `inputs` (entrées du graphe), `backend` (`langgraph` par défaut), `optimizer` (`static` par défaut, ou `learned`), `csv_path` (pipelines CSV uniquement, limité aux données d'exemple et à `CEG_DATA_DIR`) et `robustness_runs` (0 par défaut : robustesse non mesurée). Un backend qui ne peut pas honorer la tâche (ex. approbation humaine sur `python`) est refusé (400) avant toute exécution.
 - Statuts d'une exécution : `running`, `awaiting_approval` (pause HITL), `completed`, `failed`. En cas d'échec, la trace contient les nœuds réellement exécutés, puis le nœud en échec avec son erreur et les fallbacks tentés. Une exécution qui se termine sans respecter ses contraintes déclarées (ex. qualité sous `min_quality_score`) est `failed`, avec la violation dans `error`.
 - Une exécution en `awaiting_approval` se poursuit avec `POST /executions/{id}/resume` (`{"approved": true|false, "comment": "...", "value": {...}}`) ; la reprise d'une exécution qui n'est pas en attente répond 409.
 
@@ -435,7 +482,9 @@ backend/
 │   ├── planner.py        ← CognitiveTask → CEGGraph
 │   ├── backends/         ← interface Backend, backends langgraph et python, logique commune
 │   ├── compiler/         ← CEG → LangGraph, état, exécuteurs
-│   ├── runtime/          ← Runtime Decision Engine, fallbacks
+│   ├── runtime/          ← Runtime Decision Engine, fallbacks, statistiques apprises
+│   ├── simulation.py     ← environnement LLM simulé (qualité réelle ≠ notes statiques)
+│   ├── experiments/      ← expérience optimiseur statique vs appris
 │   ├── evaluation/       ← Evaluation Engine, LLM-as-judge
 │   ├── use_cases/        ← Pipelines de démonstration
 │   └── examples/
