@@ -156,6 +156,7 @@ def apply_retry(
                 model=model,
             )
         except ExecutionError as exc:
+            engine.record_failure(node, model, exc)
             logger.warning(
                 "Retry %d/%d failed for node '%s': %s",
                 try_num,
@@ -164,7 +165,7 @@ def apply_retry(
                 exc,
             )
             continue
-        engine.spend(result.cost)
+        engine.record_success(node, model, result)
         return _make_success_update(node.id, result, model.name, try_num + 1)
 
     return None
@@ -205,7 +206,13 @@ def apply_escalation(
     ]
     # The tier hint is what failed: escalation compares every higher tier.
     unhinted = node.model_copy(update={"model_tier_hint": None})
-    ranked = rank_models(unhinted, engine.constraint_for(state), higher_models, weights)
+    ranked = rank_models(
+        unhinted,
+        engine.constraint_for(state),
+        higher_models,
+        weights,
+        statistics=engine.statistics,
+    )
     if not ranked:
         return None
 
@@ -218,11 +225,12 @@ def apply_escalation(
             model=best,
         )
     except ExecutionError as exc:
+        engine.record_failure(node, best, exc)
         logger.warning(
             "Escalation to '%s' failed for node '%s': %s", best.name, node.id, exc
         )
         return None
-    engine.spend(result.cost)
+    engine.record_success(node, best, result)
     return _make_success_update(node.id, result, best.name)
 
 
@@ -274,9 +282,11 @@ def apply_degradation(
             model=degraded_model,
         )
     except ExecutionError as exc:
+        engine.record_failure(node, degraded_model, exc, learn=False)
         logger.warning("Degradation failed for node '%s': %s", node.id, exc)
         return None
-    engine.spend(result.cost)
+    # A degraded run says nothing about the model on the full task.
+    engine.record_success(node, degraded_model, result, learn=False)
     output = dict(result.output) if isinstance(result.output, dict) else result.output
     if isinstance(output, dict):
         output["degraded"] = True

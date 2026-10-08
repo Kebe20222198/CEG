@@ -29,11 +29,22 @@ class ExecutionError(Exception):
     Args:
         node_id: The node that failed.
         reason: Human-readable failure description.
+        cost: What the failed call cost anyway (a failed LLM call is billed).
+        latency_ms: How long the failed call took.
     """
 
-    def __init__(self, node_id: str, reason: str = "Simulated failure") -> None:
+    def __init__(
+        self,
+        node_id: str,
+        reason: str = "Simulated failure",
+        *,
+        cost: float = 0.0,
+        latency_ms: float = 0.0,
+    ) -> None:
         self.node_id = node_id
         self.reason = reason
+        self.cost = cost
+        self.latency_ms = latency_ms
         super().__init__(f"Execution failed for node '{node_id}': {reason}")
 
 

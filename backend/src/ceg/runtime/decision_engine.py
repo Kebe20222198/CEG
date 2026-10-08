@@ -29,9 +29,10 @@ from ceg.runtime.fallback import (
     FallbackOrchestrator,
     FallbackPolicy,
 )
+from ceg.runtime.statistics import ModelStatistics
 
 if TYPE_CHECKING:
-    from ceg.compiler.mock_executor import Executor
+    from ceg.compiler.mock_executor import ExecutionError, ExecutionResult, Executor
 
 # ── Custom exceptions ─────────────────────────────────────────────────────────
 
@@ -294,6 +295,7 @@ def rank_models(
     constraints: Constraint,
     available_models: list[ModelProfile],
     weights: SelectionWeights | None = None,
+    statistics: ModelStatistics | None = None,
 ) -> list[tuple[ModelProfile, float]]:
     """Return the eligible models for ``node`` with their score, best first.
 
@@ -313,6 +315,12 @@ def rank_models(
     Tier hint: when ``node.model_tier_hint`` is set and at least one eligible
     model belongs to that tier, only models of that tier are compared. If no
     model of the hinted tier is eligible, all eligible models are compared.
+
+    Learned statistics: with ``statistics``, the quality term is the learned
+    estimate (plus an exploration bonus) and the cost and latency terms use the
+    expected cost and latency of a *successful* result, failed calls included
+    (``ModelStatistics``). Without, the static registry values are used. The
+    hard constraints always use the registry's per-call estimates.
 
     Returns:
         ``(model, score)`` pairs sorted by decreasing score (empty if none is
@@ -338,15 +346,29 @@ def rank_models(
     if not eligible:
         return []
 
+    caps = node.required_capabilities
+    quality: dict[str, float] = {}
+    cost: dict[str, float] = {}
+    latency: dict[str, float] = {}
+    for m in eligible:
+        if statistics is None:
+            quality[m.name] = m.quality_rating_for(caps)
+            cost[m.name] = m.estimated_cost
+            latency[m.name] = m.estimated_latency_ms
+        else:
+            quality[m.name] = statistics.ranking_quality(m, caps, eligible)
+            cost[m.name] = statistics.expected_cost(m, caps)
+            latency[m.name] = statistics.expected_latency_ms(m, caps)
+
     eps = 1e-6
-    min_cost = min(m.estimated_cost for m in eligible)
-    min_latency = min(m.estimated_latency_ms for m in eligible)
+    min_cost = min(cost.values())
+    min_latency = min(latency.values())
 
     ranked: list[tuple[ModelProfile, float]] = []
     for model in eligible:
-        quality_score = model.quality_rating_for(node.required_capabilities)
-        cost_score = (min_cost + eps) / (model.estimated_cost + eps)
-        latency_score = (min_latency + eps) / (model.estimated_latency_ms + eps)
+        quality_score = quality[model.name]
+        cost_score = (min_cost + eps) / (cost[model.name] + eps)
+        latency_score = (min_latency + eps) / (latency[model.name] + eps)
         score = (
             weights.w1 * quality_score
             + weights.w2 * cost_score
@@ -419,6 +441,10 @@ class RuntimeDecisionEngine:
         max_total_latency_ms: Latency budget for the whole execution: the
             cumulated latency of the node executions never exceeds it. None
             means no limit. Set from ``TaskConstraint.max_latency_seconds``.
+        statistics: Learned model statistics. When given, model selection
+            uses them (learned optimiser) and every call — failed or not —
+            is recorded into them, so the engine keeps learning. They can be
+            shared by several engines and saved between sessions.
     """
 
     def __init__(
@@ -429,6 +455,7 @@ class RuntimeDecisionEngine:
         weights: SelectionWeights | None = None,
         fallback_config: FallbackConfig | None = None,
         max_total_latency_ms: float | None = None,
+        statistics: ModelStatistics | None = None,
     ) -> None:
         self.budget_total = budget_total
         self.budget_used: float = 0.0
@@ -436,6 +463,9 @@ class RuntimeDecisionEngine:
         self._budget_lock = threading.Lock()
         self.max_latency_ms = max_latency_ms
         self.max_total_latency_ms = max_total_latency_ms
+        self.statistics = statistics
+        # Failed calls of the node being run: billed, and added to its result.
+        self._failed_calls: dict[str, list[tuple[float, float]]] = {}
         self.available_models: list[ModelProfile] = (
             available_models
             if available_models is not None
@@ -499,6 +529,60 @@ class RuntimeDecisionEngine:
         with self._budget_lock:
             self.budget_used = 0.0
 
+    # ── Call accounting ───────────────────────────────────────────────────────
+
+    def record_success(
+        self,
+        node: CEGNode,
+        model: ModelProfile,
+        result: ExecutionResult,
+        *,
+        learn: bool = True,
+    ) -> None:
+        """Bill a successful call and learn from it.
+
+        ``learn=False`` bills without learning (e.g. a degraded run, whose
+        quality says nothing about the model on the full task).
+        """
+        self.spend(result.cost)
+        if learn and self.statistics is not None:
+            self.statistics.observe(
+                model.name,
+                node.required_capabilities,
+                success=True,
+                quality=result.confidence,
+                cost=result.cost,
+                latency_ms=result.latency_ms,
+            )
+
+    def record_failure(
+        self,
+        node: CEGNode,
+        model: ModelProfile,
+        error: ExecutionError,
+        *,
+        learn: bool = True,
+    ) -> None:
+        """Bill a failed call, keep it for the node's result, learn from it."""
+        self.spend(error.cost)
+        with self._budget_lock:
+            self._failed_calls.setdefault(node.id, []).append(
+                (error.cost, error.latency_ms)
+            )
+        if learn and self.statistics is not None:
+            self.statistics.observe(
+                model.name,
+                node.required_capabilities,
+                success=False,
+                quality=0.0,
+                cost=error.cost,
+                latency_ms=error.latency_ms,
+            )
+
+    def _take_failed_calls(self, node_id: str) -> list[tuple[float, float]]:
+        with self._budget_lock:
+            return self._failed_calls.pop(node_id, [])
+
     # ── Main entry point ──────────────────────────────────────────────────────
 
     def run_node(
@@ -527,6 +611,19 @@ class RuntimeDecisionEngine:
         Raises:
             NodeAbortError: If the Abort fallback is triggered.
         """
+
+        try:
+            update = self._run_node(node, state, executor)
+        finally:
+            failed = self._take_failed_calls(node.id)
+        return _with_failed_calls(update, failed)
+
+    def _run_node(
+        self,
+        node: CEGNode,
+        state: dict[str, Any],
+        executor: Executor,
+    ) -> dict[str, Any]:
         from ceg.compiler.mock_executor import ExecutionError
 
         # ── Step 1: constraints for this node (budget + latency left) ────
@@ -538,18 +635,26 @@ class RuntimeDecisionEngine:
             constraints=constraints,
             available_models=self.available_models,
             weights=self.weights,
+            statistics=self.statistics,
         )
         if not ranked:
             return self._handle_no_eligible_model(node, executor, state)
         model, score = ranked[0]
-        decision = {
+        decision: dict[str, Any] = {
             "selected_model": model.name,
             "tier": model.tier.value,
             "tier_hint": node.model_tier_hint.value if node.model_tier_hint else None,
             "score": round(score, 6),
             "candidates": [m.name for m, _ in ranked],
             "budget_remaining": round(self.budget_remaining, 6),
+            "quality_source": "static" if self.statistics is None else "learned",
         }
+        if self.statistics is not None:
+            caps = node.required_capabilities
+            decision["expected_quality"] = round(
+                self.statistics.quality_estimate(model, caps), 4
+            )
+            decision["observations"] = self.statistics.observations(model.name, caps)
 
         # ── Step 3: attempt execution ─────────────────────────────────────
         try:
@@ -560,6 +665,7 @@ class RuntimeDecisionEngine:
                 model=model,
             )
         except ExecutionError as exc:
+            self.record_failure(node, model, exc)
             # ── Step 4: trigger fallback chain ────────────────────────────
             update = self._orchestrator.run(
                 node=node,
@@ -572,7 +678,7 @@ class RuntimeDecisionEngine:
                 entry.setdefault("decision", decision)
             return update
 
-        self.spend(result.cost)
+        self.record_success(node, model, result)
         return {
             "node_outputs": {node.id: result.output},
             "node_statuses": {node.id: "completed"},
@@ -655,3 +761,24 @@ def executor_inputs(state: dict[str, Any]) -> dict[str, Any]:
     Node outputs take precedence over a graph input with the same key.
     """
     return {**state.get("inputs", {}), **state.get("node_outputs", {})}
+
+
+def _with_failed_calls(
+    update: dict[str, Any], failed: list[tuple[float, float]]
+) -> dict[str, Any]:
+    """Add the node's failed calls to its cost and latency.
+
+    A failed LLM call is billed and takes time: the node's cost and latency
+    are those of every call made for it, not only of the one that succeeded.
+    """
+    if not failed:
+        return update
+    failed_cost = sum(cost for cost, _ in failed)
+    failed_latency = sum(latency for _, latency in failed)
+    update["total_cost"] = update.get("total_cost", 0.0) + failed_cost
+    update["total_latency_ms"] = update.get("total_latency_ms", 0.0) + failed_latency
+    for entry in update.get("execution_log", [])[-1:]:
+        entry["cost"] = entry.get("cost", 0.0) + failed_cost
+        entry["latency_ms"] = entry.get("latency_ms", 0.0) + failed_latency
+        entry["failed_calls"] = len(failed)
+    return update
