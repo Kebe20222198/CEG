@@ -6,6 +6,7 @@ engine that happens to execute the plan.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import pytest
@@ -18,7 +19,7 @@ from ceg.models.graph import CEGGraph
 from ceg.models.node import CEGNode
 from ceg.models.task import CognitiveTask, SubTask, TaskConstraint
 from ceg.planner import plan
-from ceg.runtime.decision_engine import RuntimeDecisionEngine
+from ceg.runtime.decision_engine import BudgetUnavailableError, RuntimeDecisionEngine
 from ceg.runtime.fallback import NodeAbortError
 from ceg.use_cases.demo_pipelines import LoopReportExecutor, build_loop_report_graph
 from ceg.use_cases.sales_criteria import ALL_SALES_CRITERIA
@@ -167,3 +168,98 @@ class TestQualityIsVerifiedAfterwards:
         )
         assert report.max_budget_usd == 0.02
         assert report.max_latency_seconds == 1.0
+
+
+class _SlowExecutor(MockExecutor):
+    """Calls that take real time, so parallel branches truly overlap."""
+
+    def run(
+        self, node_id: str, objective: str, inputs: dict[str, Any], attempt: int = 1
+    ) -> Any:
+        time.sleep(0.1)
+        return super().run(node_id, objective, inputs, attempt)
+
+
+def _fan_out(**constraints: Any) -> CognitiveTask:
+    """``init`` then three branches running in parallel."""
+    return CognitiveTask(
+        objective="o",
+        task_constraints=TaskConstraint(**constraints),
+        subtasks=[SubTask(id="init", objective="i", model_tier_hint="fast")]
+        + [
+            SubTask(
+                id=f"b{i}", objective="b", dependencies=["init"], model_tier_hint="fast"
+            )
+            for i in range(3)
+        ],
+    )
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+class TestParallelBranchesShareTheBudgets:
+    """Regression: parallel branches each saw the whole remaining budget.
+
+    With calls that take time, three LangGraph branches each checked the
+    remaining 0.003 USD before any of them had spent it, and the run cost
+    0.008 USD for a 0.005 USD budget. Calls now reserve their estimated cost
+    and latency atomically.
+    """
+
+    def test_budget(self, backend: str) -> None:
+        engine = RuntimeDecisionEngine()
+        workflow = get_backend(backend).compile(
+            plan(_fan_out(max_cost_usd=0.005)), engine=engine, executor=_SlowExecutor()
+        )
+        with pytest.raises(NodeAbortError):
+            workflow.invoke()
+        assert engine.budget_used <= 0.005 + 1e-12
+
+    def test_latency(self, backend: str) -> None:
+        engine = RuntimeDecisionEngine()
+        workflow = get_backend(backend).compile(
+            plan(_fan_out(max_latency_seconds=0.25)),
+            engine=engine,
+            executor=_SlowExecutor(),
+        )
+        with pytest.raises(NodeAbortError):
+            workflow.invoke()
+        assert engine.latency_used_ms <= 250.0 + 1e-9
+
+    def test_subgraph_counts_the_parent_latency(self, backend: str) -> None:
+        """A sub-graph used to start its latency budget from zero."""
+        task = CognitiveTask(
+            objective="o",
+            task_constraints=TaskConstraint(max_latency_seconds=0.7),
+            subtasks=[
+                SubTask(id="a", objective="a", model_tier_hint="quality"),
+                SubTask(
+                    id="team",
+                    objective="t",
+                    dependencies=["a"],
+                    subtasks=[
+                        SubTask(id="x", objective="x", model_tier_hint="quality")
+                    ],
+                ),
+            ],
+        )
+        state = get_backend(backend).compile(plan(task)).invoke()
+        assert state["total_latency_ms"] <= 700.0
+        models = {e["node_id"]: e["model_used"] for e in state["execution_log"]}
+        assert models["a"] == "quality-pro"
+        assert models["x"] != "quality-pro"  # 500 ms no longer fit
+
+
+class TestReservation:
+    def test_a_reserved_budget_is_not_offered_twice(self) -> None:
+        engine = RuntimeDecisionEngine(budget_total=0.003)
+        assert engine._try_reserve(0.002, 80.0)
+        assert engine.budget_remaining == pytest.approx(0.001)
+        assert not engine._try_reserve(0.002, 80.0)
+
+    def test_failed_reservation_is_reported(self) -> None:
+        engine = RuntimeDecisionEngine(budget_total=0.001)
+        model = next(m for m in engine.available_models if m.name == "fast-mini")
+        node = CEGNode(id="a", objective="a")
+        with pytest.raises(BudgetUnavailableError):
+            engine.call(node, model, MockExecutor(), {"node_outputs": {}})
+        assert engine.budget_used == 0.0

@@ -12,9 +12,9 @@ sub-graphs follow the same semantics as the LangGraph backend.
 Not supported: Human-in-the-Loop pauses (``supports_hitl = False``). A graph
 with approval nodes is refused unless ``ignore_interrupts=True``.
 
-Latency budget: nodes see the latency accumulated by every node before them,
-including sibling branches; LangGraph's parallel branches do not see each
-other's latency. Results only differ when a run is close to its limit.
+Budgets: cost and latency are accounted by the engine, which reserves each
+call before it runs, so both backends enforce the same limits even when
+LangGraph runs branches concurrently.
 """
 
 from __future__ import annotations

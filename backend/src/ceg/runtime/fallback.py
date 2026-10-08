@@ -144,19 +144,16 @@ def apply_retry(
     exhausted (caller should proceed to the next strategy in the chain).
     """
     from ceg.compiler.mock_executor import ExecutionError  # avoid circular import
-    from ceg.runtime.decision_engine import executor_inputs
+    from ceg.runtime.decision_engine import BudgetUnavailableError
 
     for try_num in range(1, max_retries + 1):
         try:
-            result = executor.execute(
-                node_id=node.id,
-                objective=node.objective,
-                inputs=executor_inputs(state),
-                attempt=attempt + try_num,
-                model=model,
+            result = engine.call(
+                node, model, executor, state, attempt=attempt + try_num
             )
+        except BudgetUnavailableError:
+            return None
         except ExecutionError as exc:
-            engine.record_failure(node, model, exc)
             logger.warning(
                 "Retry %d/%d failed for node '%s': %s",
                 try_num,
@@ -165,7 +162,6 @@ def apply_retry(
                 exc,
             )
             continue
-        engine.record_success(node, model, result)
         return _make_success_update(node.id, result, model.name, try_num + 1)
 
     return None
@@ -187,7 +183,7 @@ def apply_escalation(
     """
     from ceg.compiler.mock_executor import ExecutionError
     from ceg.models.node import ModelTierHint
-    from ceg.runtime.decision_engine import executor_inputs, rank_models
+    from ceg.runtime.decision_engine import BudgetUnavailableError, rank_models
 
     tier_order = [
         ModelTierHint.FAST,
@@ -218,19 +214,14 @@ def apply_escalation(
 
     best = ranked[0][0]
     try:
-        result = executor.execute(
-            node_id=node.id,
-            objective=node.objective,
-            inputs=executor_inputs(state),
-            model=best,
-        )
+        result = engine.call(node, best, executor, state)
+    except BudgetUnavailableError:
+        return None
     except ExecutionError as exc:
-        engine.record_failure(node, best, exc)
         logger.warning(
             "Escalation to '%s' failed for node '%s': %s", best.name, node.id, exc
         )
         return None
-    engine.record_success(node, best, result)
     return _make_success_update(node.id, result, best.name)
 
 
@@ -256,7 +247,7 @@ def apply_degradation(
     the degraded run does not fit in the budget).
     """
     from ceg.compiler.mock_executor import ExecutionError
-    from ceg.runtime.decision_engine import executor_inputs
+    from ceg.runtime.decision_engine import BudgetUnavailableError
 
     degraded_model = model.model_copy(
         update={
@@ -275,18 +266,20 @@ def apply_degradation(
         : max(1, int(len(node.objective) * truncate_ratio))
     ]
     try:
-        result = executor.execute(
-            node_id=node.id,
+        # A degraded run says nothing about the model on the full task.
+        result = engine.call(
+            node,
+            degraded_model,
+            executor,
+            state,
             objective=truncated_objective,
-            inputs=executor_inputs(state),
-            model=degraded_model,
+            learn=False,
         )
+    except BudgetUnavailableError:
+        return None
     except ExecutionError as exc:
-        engine.record_failure(node, degraded_model, exc, learn=False)
         logger.warning("Degradation failed for node '%s': %s", node.id, exc)
         return None
-    # A degraded run says nothing about the model on the full task.
-    engine.record_success(node, degraded_model, result, learn=False)
     output = dict(result.output) if isinstance(result.output, dict) else result.output
     if isinstance(output, dict):
         output["degraded"] = True

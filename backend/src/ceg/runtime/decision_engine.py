@@ -37,6 +37,17 @@ if TYPE_CHECKING:
 # ── Custom exceptions ─────────────────────────────────────────────────────────
 
 
+class BudgetUnavailableError(Exception):
+    """The budget or latency left no longer covers a call (reservation refused)."""
+
+    def __init__(self, node_id: str, model: str) -> None:
+        self.node_id = node_id
+        self.model = model
+        super().__init__(
+            f"Not enough budget or latency left to call '{model}' for '{node_id}'."
+        )
+
+
 class NoEligibleModelError(Exception):
     """Raised when no model satisfies all hard constraints for a given node."""
 
@@ -459,6 +470,11 @@ class RuntimeDecisionEngine:
     ) -> None:
         self.budget_total = budget_total
         self.budget_used: float = 0.0
+        # Estimated cost and latency of the calls in flight. Parallel branches
+        # see each other's reservations, so together they cannot overspend.
+        self.budget_reserved: float = 0.0
+        self.latency_used_ms: float = 0.0
+        self.latency_reserved_ms: float = 0.0
         # Parallel branches run in worker threads and spend concurrently.
         self._budget_lock = threading.Lock()
         self.max_latency_ms = max_latency_ms
@@ -491,43 +507,124 @@ class RuntimeDecisionEngine:
 
     @property
     def budget_remaining(self) -> float:
-        """Remaining budget = total − used."""
-        return max(0.0, self.budget_total - self.budget_used)
+        """Budget left for new calls = total − spent − reserved by calls in flight."""
+        return max(0.0, self.budget_total - self.budget_used - self.budget_reserved)
+
+    @property
+    def latency_remaining_ms(self) -> float | None:
+        """Latency budget left for new calls (None: no limit)."""
+        if self.max_total_latency_ms is None:
+            return None
+        return max(
+            0.0,
+            self.max_total_latency_ms - self.latency_used_ms - self.latency_reserved_ms,
+        )
 
     @property
     def default_constraint(self) -> Constraint:
-        """Current constraint snapshot reflecting the live budget."""
-        return Constraint(
-            budget_remaining=self.budget_remaining,
-            max_latency_ms=self.max_latency_ms,
-        )
-
-    def constraint_for(self, state: dict[str, Any]) -> Constraint:
-        """Constraints for the next node of the execution whose state is given.
-
-        Adds the latency budget to ``default_constraint``: a node may not
-        take longer than what remains of ``max_total_latency_ms`` once the
-        latency already accumulated in ``state`` is deducted.
-        """
+        """Constraints for the next call: budget and latency left."""
         max_latency_ms = self.max_latency_ms
-        if self.max_total_latency_ms is not None:
-            spent = float(state.get("total_latency_ms", 0.0))
-            max_latency_ms = min(
-                max_latency_ms, max(0.0, self.max_total_latency_ms - spent)
-            )
+        remaining = self.latency_remaining_ms
+        if remaining is not None:
+            max_latency_ms = min(max_latency_ms, remaining)
         return Constraint(
             budget_remaining=self.budget_remaining, max_latency_ms=max_latency_ms
         )
 
-    def spend(self, amount: float) -> None:
-        """Record a cost expenditure against the global budget."""
+    def constraint_for(self, state: dict[str, Any]) -> Constraint:
+        """Constraints for the next node.
+
+        Budget and latency are accounted by the engine, across every branch
+        and sub-graph of the execution; ``state`` is not needed and kept for
+        compatibility.
+        """
+        return self.default_constraint
+
+    def spend(self, amount: float, latency_ms: float = 0.0) -> None:
+        """Record a cost (and latency) against the execution's budgets."""
         with self._budget_lock:
             self.budget_used += amount
+            self.latency_used_ms += latency_ms
 
     def reset_budget(self) -> None:
         """Start a new graph execution with the full budget available."""
         with self._budget_lock:
             self.budget_used = 0.0
+            self.budget_reserved = 0.0
+            self.latency_used_ms = 0.0
+            self.latency_reserved_ms = 0.0
+
+    def _try_reserve(self, cost: float, latency_ms: float) -> bool:
+        """Atomically reserve a call's estimated cost and latency, if they fit."""
+        with self._budget_lock:
+            if (
+                cost
+                > self.budget_total - self.budget_used - self.budget_reserved + 1e-12
+            ):
+                return False
+            if self.max_total_latency_ms is not None and (
+                latency_ms
+                > self.max_total_latency_ms
+                - self.latency_used_ms
+                - self.latency_reserved_ms
+                + 1e-9
+            ):
+                return False
+            self.budget_reserved += cost
+            self.latency_reserved_ms += latency_ms
+            return True
+
+    def _release(self, cost: float, latency_ms: float) -> None:
+        with self._budget_lock:
+            self.budget_reserved = max(0.0, self.budget_reserved - cost)
+            self.latency_reserved_ms = max(0.0, self.latency_reserved_ms - latency_ms)
+
+    def call(
+        self,
+        node: CEGNode,
+        model: ModelProfile,
+        executor: Executor,
+        state: dict[str, Any],
+        *,
+        objective: str | None = None,
+        attempt: int = 1,
+        learn: bool = True,
+    ) -> ExecutionResult:
+        """Make one model call for ``node``, within the budgets.
+
+        The call's estimated cost and latency are reserved first, atomically:
+        parallel branches cannot both spend the same remaining budget. Once
+        the call returns, the reservation is replaced by what the call
+        actually cost — failed calls included — and the engine learns from it.
+
+        Raises:
+            BudgetUnavailableError: The budget or latency left no longer
+                covers this call (another branch used it meanwhile).
+            ExecutionError: The call failed (it is billed anyway).
+        """
+        from ceg.compiler.mock_executor import ExecutionError
+
+        cost, latency = model.estimated_cost, model.estimated_latency_ms
+        if not self._try_reserve(cost, latency):
+            raise BudgetUnavailableError(node.id, model.name)
+        try:
+            result = executor.execute(
+                node_id=node.id,
+                objective=objective if objective is not None else node.objective,
+                inputs=executor_inputs(state),
+                attempt=attempt,
+                model=model,
+            )
+        except ExecutionError as exc:
+            self._release(cost, latency)
+            self.record_failure(node, model, exc, learn=learn)
+            raise
+        except BaseException:
+            self._release(cost, latency)
+            raise
+        self._release(cost, latency)
+        self.record_success(node, model, result, learn=learn)
+        return result
 
     # ── Call accounting ───────────────────────────────────────────────────────
 
@@ -544,7 +641,7 @@ class RuntimeDecisionEngine:
         ``learn=False`` bills without learning (e.g. a degraded run, whose
         quality says nothing about the model on the full task).
         """
-        self.spend(result.cost)
+        self.spend(result.cost, result.latency_ms)
         if learn and self.statistics is not None:
             self.statistics.observe(
                 model.name,
@@ -564,7 +661,7 @@ class RuntimeDecisionEngine:
         learn: bool = True,
     ) -> None:
         """Bill a failed call, keep it for the node's result, learn from it."""
-        self.spend(error.cost)
+        self.spend(error.cost, error.latency_ms)
         with self._budget_lock:
             self._failed_calls.setdefault(node.id, []).append(
                 (error.cost, error.latency_ms)
@@ -626,59 +723,42 @@ class RuntimeDecisionEngine:
     ) -> dict[str, Any]:
         from ceg.compiler.mock_executor import ExecutionError
 
-        # ── Step 1: constraints for this node (budget + latency left) ────
-        constraints = self.constraint_for(state)
-
-        # ── Step 2: model selection ───────────────────────────────────────
-        ranked = rank_models(
-            node=node,
-            constraints=constraints,
-            available_models=self.available_models,
-            weights=self.weights,
-            statistics=self.statistics,
-        )
-        if not ranked:
-            return self._handle_no_eligible_model(node, executor, state)
-        model, score = ranked[0]
-        decision: dict[str, Any] = {
-            "selected_model": model.name,
-            "tier": model.tier.value,
-            "tier_hint": node.model_tier_hint.value if node.model_tier_hint else None,
-            "score": round(score, 6),
-            "candidates": [m.name for m, _ in ranked],
-            "budget_remaining": round(self.budget_remaining, 6),
-            "quality_source": "static" if self.statistics is None else "learned",
-        }
-        if self.statistics is not None:
-            caps = node.required_capabilities
-            decision["expected_quality"] = round(
-                self.statistics.quality_estimate(model, caps), 4
-            )
-            decision["observations"] = self.statistics.observations(model.name, caps)
-
-        # ── Step 3: attempt execution ─────────────────────────────────────
-        try:
-            result = executor.execute(
-                node_id=node.id,
-                objective=node.objective,
-                inputs=executor_inputs(state),
-                model=model,
-            )
-        except ExecutionError as exc:
-            self.record_failure(node, model, exc)
-            # ── Step 4: trigger fallback chain ────────────────────────────
-            update = self._orchestrator.run(
+        # ── Steps 1–3: select a model that fits, and call it ─────────────
+        # Ranking and reservation are not one atomic step: if a parallel
+        # branch takes the budget in between, the node ranks again with what
+        # is left.
+        for _ in range(len(self.available_models) + 1):
+            ranked = rank_models(
                 node=node,
-                executor=executor,
-                state=state,
-                model=model,
-                error=exc,
+                constraints=self.default_constraint,
+                available_models=self.available_models,
+                weights=self.weights,
+                statistics=self.statistics,
             )
-            for entry in update.get("execution_log", []):
-                entry.setdefault("decision", decision)
-            return update
+            if not ranked:
+                return self._handle_no_eligible_model(node, executor, state)
+            model, score = ranked[0]
+            decision = self._decision(node, model, score, ranked)
+            try:
+                result = self.call(node, model, executor, state)
+            except BudgetUnavailableError:
+                continue
+            except ExecutionError as exc:
+                # ── Step 4: trigger fallback chain ────────────────────────
+                update = self._orchestrator.run(
+                    node=node,
+                    executor=executor,
+                    state=state,
+                    model=model,
+                    error=exc,
+                )
+                for entry in update.get("execution_log", []):
+                    entry.setdefault("decision", decision)
+                return update
+            break
+        else:
+            return self._handle_no_eligible_model(node, executor, state)
 
-        self.record_success(node, model, result)
         return {
             "node_outputs": {node.id: result.output},
             "node_statuses": {node.id: "completed"},
@@ -699,6 +779,31 @@ class RuntimeDecisionEngine:
                 }
             ],
         }
+
+    def _decision(
+        self,
+        node: CEGNode,
+        model: ModelProfile,
+        score: float,
+        ranked: list[tuple[ModelProfile, float]],
+    ) -> dict[str, Any]:
+        """Why ``model`` was chosen, for the trace."""
+        decision: dict[str, Any] = {
+            "selected_model": model.name,
+            "tier": model.tier.value,
+            "tier_hint": node.model_tier_hint.value if node.model_tier_hint else None,
+            "score": round(score, 6),
+            "candidates": [m.name for m, _ in ranked],
+            "budget_remaining": round(self.budget_remaining, 6),
+            "quality_source": "static" if self.statistics is None else "learned",
+        }
+        if self.statistics is not None:
+            caps = node.required_capabilities
+            decision["expected_quality"] = round(
+                self.statistics.quality_estimate(model, caps), 4
+            )
+            decision["observations"] = self.statistics.observations(model.name, caps)
+        return decision
 
     # ── Private helpers ───────────────────────────────────────────────────────
 
