@@ -164,28 +164,37 @@ class TestCrewAITranslation:
         pytest.importorskip("crewai")
 
     @staticmethod
-    def _flow_class(graph: CEGGraph) -> Any:
+    def _flow_code(graph: CEGGraph) -> dict[str, str]:
+        # Read from CEG's own translation, not from CrewAI's internals,
+        # which change between versions.
         from ceg.backends.crewai import CrewAIBackend
 
-        return CrewAIBackend().compile(graph).flow_class
+        return CrewAIBackend().compile(graph).flow_code
 
     def test_joins_and_conditions(self) -> None:
-        flow = self._flow_class(build_parallel_sales_graph())
-        assert flow._start_methods == ["begin"]
-        assert flow._listeners["init"] == ("OR", ["begin"])
-        assert flow._listeners["fetch_nord"] == ("OR", ["init"])
-        join = flow._listeners["aggregate_multi"]
-        assert join["type"] == "AND"
-        assert sorted(join["conditions"]) == ["fetch_est", "fetch_nord", "fetch_sud"]
-        # A condition is checked by its target, which still waits for its source.
-        assert flow._listeners["generate_alert"] == ("OR", ["detect_anomaly"])
-        assert not flow._routers
+        code = self._flow_code(build_parallel_sales_graph())
+        assert code == {
+            "begin": "@start()",
+            "init": '@listen("begin")',
+            "fetch_nord": '@listen("init")',
+            "fetch_sud": '@listen("init")',
+            "fetch_est": '@listen("init")',
+            "aggregate_multi": '@listen(and_("fetch_nord", "fetch_sud", "fetch_est"))',
+            "detect_anomaly": '@listen("aggregate_multi")',
+            # A condition is checked by its target, which waits for its source.
+            "generate_alert": '@listen("detect_anomaly")',
+        }
 
     def test_loop_is_a_router(self) -> None:
-        flow = self._flow_class(build_loop_report_graph())
-        assert flow._routers == {"enter_rediger_brouillon", "route_evaluer_critique"}
-        assert flow._listeners["rediger_brouillon"] == ("OR", ["rediger_brouillon:run"])
-        assert flow._listeners["publier_rapport"] == ("OR", ["evaluer_critique:done"])
+        code = self._flow_code(build_loop_report_graph())
+        assert code == {
+            "begin": "@start()",
+            "enter_rediger_brouillon": '@router("begin")',
+            "rediger_brouillon": '@listen("rediger_brouillon:run")',
+            "evaluer_critique": '@listen("rediger_brouillon")',
+            "publier_rapport": '@listen("evaluer_critique:done")',
+            "route_evaluer_critique": '@router("evaluer_critique")',
+        }
 
     def test_node_ids_clashing_with_flow_are_renamed(self) -> None:
         from ceg.backends.crewai import method_names

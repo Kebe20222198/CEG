@@ -261,6 +261,7 @@ ceg run analyse_ventes_parallele --backend crewai
 ```python
 workflow = get_backend("crewai").compile(graph)
 workflow.flow_class          # la sous-classe de crewai.flow.Flow générée
+workflow.flow_code           # son câblage : {"aggregate_multi": '@listen(and_("fetch_nord", ...))', ...}
 state = workflow.invoke()    # même état final qu'avec langgraph et python
 ```
 

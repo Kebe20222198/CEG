@@ -34,6 +34,7 @@ import os
 import re
 import threading
 from collections import defaultdict
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
@@ -115,6 +116,7 @@ class CrewAIWorkflow:
         self._executor = executor
         self._snapshots: dict[str, StateSnapshot] = {}
         self.flow_class = build_flow_class(graph)
+        self.flow_code = describe_flow(graph)
         self.metadata: dict[str, Any] = {
             "node_count": len(graph.nodes),
             "edge_count": len(graph.edges),
@@ -190,12 +192,50 @@ def method_names(graph: CEGGraph) -> dict[str, str]:
     return names
 
 
+# What a method listens to: a method name or label, or all of several (and_).
+Trigger = str | tuple[str, ...]
+
+
 def build_flow_class(graph: CEGGraph) -> type[CEGFlow]:
     """Translate ``graph`` into a ``CEGFlow`` subclass.
 
     Raises:
         ValueError: If a loop body joins on a node outside the loop.
     """
+    decorators: dict[str, Callable[..., Any]] = {"listen": listen, "router": router}
+    # Flow's metaclass only sees the methods of the class body itself.
+    namespace: dict[str, Any] = {}
+    for name, (kind, trigger, func) in _wiring(graph).items():
+        if kind == "start":
+            namespace[name] = start()(_named(name, func))
+        else:
+            condition = and_(*trigger) if isinstance(trigger, tuple) else trigger
+            namespace[name] = decorators[kind](condition)(_named(name, func))
+    label = (graph.task.name if graph.task else None) or "graph"
+    return type("CEGFlow_" + re.sub(r"\W", "_", label), (CEGFlow,), namespace)
+
+
+def describe_flow(graph: CEGGraph) -> dict[str, str]:
+    """The decorator of each generated method, as CrewAI code.
+
+    E.g. ``{"aggregate": '@listen(and_("fetch_a", "fetch_b"))'}``.
+    """
+
+    def code(trigger: Trigger | None) -> str:
+        if trigger is None:
+            return ""
+        if isinstance(trigger, tuple):
+            return "and_(" + ", ".join(f'"{t}"' for t in trigger) + ")"
+        return f'"{trigger}"'
+
+    return {
+        name: f"@{kind}({code(trigger)})"
+        for name, (kind, trigger, _) in _wiring(graph).items()
+    }
+
+
+def _wiring(graph: CEGGraph) -> dict[str, tuple[str, Trigger | None, Any]]:
+    """Every method of the flow: decorator kind, trigger and body."""
     topology = _Topology(graph)
     topology.check_loop_joins()
     names = method_names(graph)
@@ -205,36 +245,37 @@ def build_flow_class(graph: CEGGraph) -> type[CEGFlow]:
         # source — the label its router emits once the loop is over.
         return f"{node_id}:done" if node_id in topology.loops else names[node_id]
 
-    def entry(node_id: str) -> Any:
+    def entry(node_id: str) -> Trigger:
         preds = sorted(topology.preds[node_id], key=topology.order.__getitem__)
         if not preds:
             return BEGIN
         if len(preds) == 1:
             return signal(preds[0])
-        return and_(*(signal(p) for p in preds))
+        return tuple(signal(p) for p in preds)
 
-    # Flow's metaclass only sees the methods of the class body itself.
-    namespace: dict[str, Any] = {BEGIN: start()(_named(BEGIN, _begin))}
-
+    wiring: dict[str, tuple[str, Trigger | None, Any]] = {
+        BEGIN: ("start", None, _begin)
+    }
     for node in graph.nodes:
         name = names[node.id]
-        step = _named(name, _node_method(node.id))
         if node.id in topology.loop_targets:
             # Entered once through its dependencies, then again by the loop.
-            namespace[name] = listen(f"{node.id}:run")(step)
-            enter = f"enter_{name}"
-            namespace[enter] = router(entry(node.id))(
-                _named(enter, _label_method(f"{node.id}:run"))
+            run_label = f"{node.id}:run"
+            wiring[f"enter_{name}"] = (
+                "router",
+                entry(node.id),
+                _label_method(run_label),
             )
+            wiring[name] = ("listen", run_label, _node_method(node.id))
         else:
-            namespace[name] = listen(entry(node.id))(step)
-
+            wiring[name] = ("listen", entry(node.id), _node_method(node.id))
     for source in topology.loops:
-        route = f"route_{names[source]}"
-        namespace[route] = router(names[source])(_named(route, _loop_method(source)))
-
-    label = (graph.task.name if graph.task else None) or "graph"
-    return type("CEGFlow_" + re.sub(r"\W", "_", label), (CEGFlow,), namespace)
+        wiring[f"route_{names[source]}"] = (
+            "router",
+            names[source],
+            _loop_method(source),
+        )
+    return wiring
 
 
 def _named(name: str, func: Any) -> Any:
