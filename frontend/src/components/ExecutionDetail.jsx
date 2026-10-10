@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import FlowGraph from './FlowGraph';
 import NodeInspector from './NodeInspector';
+import StatusPill from './StatusPill';
 
 export default function ExecutionDetail({
   executionId,
@@ -39,7 +40,7 @@ export default function ExecutionDetail({
 
     Promise.all([
       fetch(`${apiBaseUrl}/executions/${currentExecId}`).then((res) => {
-        if (!res.ok) throw new Error(`Execution ${currentExecId} not found`);
+        if (!res.ok) throw new Error(`Exécution ${currentExecId} introuvable`);
         return res.json();
       }),
       fetch(`${apiBaseUrl}/executions/${currentExecId}/trace`).then((res) =>
@@ -82,15 +83,15 @@ export default function ExecutionDetail({
         body: JSON.stringify({
           approved,
           comment: approved
-            ? 'Approved via CEG Studio UI'
-            : 'Rejected via CEG Studio UI',
+            ? 'Approuvé depuis le Studio'
+            : 'Rejeté depuis le Studio',
         }),
       });
       if (res.ok) {
         fetchDetail();
       } else {
         const errData = await res.json().catch(() => ({}));
-        setResumeError(errData.detail || `Resume failed (HTTP ${res.status})`);
+        setResumeError(errData.detail || `Reprise impossible (HTTP ${res.status})`);
       }
     } catch (err) {
       console.error('Resume error:', err);
@@ -112,11 +113,11 @@ export default function ExecutionDetail({
         }}
       >
         <div style={{ marginBottom: '16px', fontSize: '0.875rem' }}>
-          // No execution selected or available in database
+          Aucune exécution sélectionnée.
         </div>
         {onRunNew && (
           <button className="btn btn-primary" onClick={onRunNew}>
-            Launch New Task
+            Lancer un workflow
           </button>
         )}
       </div>
@@ -135,7 +136,7 @@ export default function ExecutionDetail({
           fontSize: '0.875rem',
         }}
       >
-        // Connecting to CEG Runtime & resolving traces for {currentExecId || 'execution'}...
+        Chargement de l'exécution {currentExecId || ''}…
       </div>
     );
   }
@@ -147,10 +148,10 @@ export default function ExecutionDetail({
         style={{ padding: '40px', textAlign: 'center' }}
       >
         <div style={{ color: 'var(--status-failed)', marginBottom: '16px', fontFamily: 'var(--font-mono)' }}>
-          {error || 'Execution not found'}
+          {error || 'Exécution introuvable'}
         </div>
         <button className="btn btn-ghost" onClick={onBack}>
-          <ArrowLeft size={14} /> Back to dashboard
+          <ArrowLeft size={14} /> Retour aux exécutions
         </button>
       </div>
     );
@@ -190,7 +191,7 @@ export default function ExecutionDetail({
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <button className="btn btn-ghost" onClick={onBack}>
             <ArrowLeft size={14} />
-            <span>Dashboard</span>
+            <span>Exécutions</span>
           </button>
 
           <span style={{ color: 'var(--text-dim)' }}>/</span>
@@ -239,10 +240,7 @@ export default function ExecutionDetail({
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span className={`status-pill ${detail.status}`}>
-            <span className="status-pill-dot" />
-            <span>{detail.status}</span>
-          </span>
+          <StatusPill status={detail.status} />
 
           <div
             className="mono"
@@ -287,12 +285,12 @@ export default function ExecutionDetail({
                   color: '#e9d5ff',
                 }}
               >
-                HUMAN-IN-THE-LOOP INTERRUPT ACTIVE
+                APPROBATION HUMAINE REQUISE
               </div>
               <div style={{ fontSize: '0.75rem', color: '#c084fc' }}>
                 {pendingApprovals.length > 0
                   ? pendingApprovals.map((p) => p.message).join(' • ')
-                  : 'This execution hit a checkpointed approval node. A human decision is required to proceed.'}
+                  : 'Cette exécution attend une décision humaine pour continuer.'}
               </div>
               {resumeError && (
                 <div style={{ fontSize: '0.75rem', color: 'var(--status-failed)', marginTop: '4px' }}>
@@ -309,7 +307,7 @@ export default function ExecutionDetail({
               disabled={isResuming}
               style={{ background: 'var(--status-completed)', borderColor: 'var(--status-completed)' }}
             >
-              <CheckCircle2 size={14} /> Approve & Continue
+              <CheckCircle2 size={14} /> Approuver et continuer
             </button>
 
             <button
@@ -318,7 +316,7 @@ export default function ExecutionDetail({
               disabled={isResuming}
               style={{ color: 'var(--status-failed)', borderColor: 'rgba(239, 68, 68, 0.4)' }}
             >
-              <XCircle size={14} /> Reject & Skip
+              <XCircle size={14} /> Rejeter l'étape
             </button>
           </div>
         </div>
@@ -341,7 +339,7 @@ export default function ExecutionDetail({
             <Zap size={16} color="var(--accent-primary)" />
             <div>
               <div style={{ fontSize: '0.6875rem', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
-                COMPOSITE SCORE
+                SCORE COMPOSITE
               </div>
               <div className="mono" style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--accent-primary)' }}>
                 {formatScore(metrics.composite_score)}
@@ -351,7 +349,7 @@ export default function ExecutionDetail({
 
           <div>
             <div style={{ fontSize: '0.6875rem', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
-              QUALITY SCORE
+              QUALITÉ
             </div>
             <div className="mono" style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--status-completed)' }}>
               {formatScore(metrics.quality_score)}
@@ -360,7 +358,7 @@ export default function ExecutionDetail({
 
           <div>
             <div style={{ fontSize: '0.6875rem', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
-              ROBUSTNESS SCORE
+              ROBUSTESSE
             </div>
             <div className="mono" style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--accent-violet)' }}>
               {formatScore(metrics.robustness_score)}
@@ -369,7 +367,7 @@ export default function ExecutionDetail({
 
           <div>
             <div style={{ fontSize: '0.6875rem', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
-              EVAL ENGINE
+              JUGE
             </div>
             <div className="mono" style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
               {judgeLabel(metrics.report?.metadata?.judge)}
@@ -394,7 +392,7 @@ export default function ExecutionDetail({
           selectedNodeId={selectedNodeId}
           onNodeSelect={setSelectedNodeId}
           traceData={traces}
-          title={`CEG Execution Flow // ${detail.scenario_name}`}
+          title={`Exécution // ${detail.scenario_name}`}
           height="520px"
         />
 
@@ -411,7 +409,7 @@ export default function ExecutionDetail({
         <div className="ide-header">
           <div className="ide-title">
             <Activity size={13} color="var(--accent-primary)" />
-            <span>EXECUTION TRACE LOG ({traces.length} STEPS)</span>
+            <span>TRACE D'EXÉCUTION ({traces.length} ÉTAPES)</span>
           </div>
         </div>
 
@@ -426,7 +424,7 @@ export default function ExecutionDetail({
                 color: 'var(--text-dim)',
               }}
             >
-              No step traces recorded yet
+              Aucune étape enregistrée
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -462,10 +460,7 @@ export default function ExecutionDetail({
                         #{idx + 1}
                       </span>
 
-                      <span className={`status-pill ${trace.status}`}>
-                        <span className="status-pill-dot" />
-                        <span>{trace.status}</span>
-                      </span>
+                      <StatusPill status={trace.status} />
 
                       <span
                         className="mono"
@@ -504,10 +499,10 @@ export default function ExecutionDetail({
 
 // A null score was not measured: show it as such instead of 0%.
 function formatScore(value) {
-  return value == null ? 'not measured' : `${(value * 100).toFixed(1)}%`;
+  return value == null ? 'non mesuré' : `${(value * 100).toFixed(1)}%`;
 }
 
 function judgeLabel(judge) {
   if (!judge) return 'LLM-as-Judge';
-  return judge.startsWith('Mock') ? `${judge} (simulated scores)` : judge;
+  return judge.startsWith('Mock') ? `${judge} (scores simulés)` : judge;
 }

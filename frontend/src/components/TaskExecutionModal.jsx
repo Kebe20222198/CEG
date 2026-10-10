@@ -107,7 +107,7 @@ export default function TaskExecutionModal({
 
       if (!res.ok) {
         const errData = await res.json();
-        throw new Error(errData.detail || 'Execution trigger failed');
+        throw new Error(errData.detail || 'Échec du lancement');
       }
 
       const newExec = await res.json();
@@ -156,7 +156,7 @@ export default function TaskExecutionModal({
 
           <div className="ide-title">
             <Terminal size={13} color="var(--accent-primary)" />
-            <span>EXECUTE COGNITIVE TASK WORKFLOW</span>
+            <span>EXÉCUTER UN WORKFLOW</span>
           </div>
 
           <button
@@ -205,7 +205,7 @@ export default function TaskExecutionModal({
                   textTransform: 'uppercase',
                 }}
               >
-                SELECT WORKFLOW & CONTROL FLOW TYPE
+                WORKFLOW
               </label>
               <select
                 value={selectedTaskId}
@@ -241,7 +241,7 @@ export default function TaskExecutionModal({
                   textTransform: 'uppercase',
                 }}
               >
-                SCENARIO / RUN IDENTIFIER
+                SCÉNARIO / NOM DE L'EXÉCUTION
               </label>
               <input
                 type="text"
@@ -274,7 +274,7 @@ export default function TaskExecutionModal({
                   textTransform: 'uppercase',
                 }}
               >
-                EXECUTION BACKEND
+                BACKEND D'EXÉCUTION
               </label>
               <select
                 value={backend}
@@ -294,7 +294,7 @@ export default function TaskExecutionModal({
                 {backends.map((b) => (
                   <option key={b.id} value={b.id}>
                     {b.id}
-                    {b.supports_hitl ? '' : ' (no human approval)'}
+                    {b.supports_hitl ? '' : ' (sans approbation humaine)'}
                   </option>
                 ))}
               </select>
@@ -311,7 +311,7 @@ export default function TaskExecutionModal({
                   textTransform: 'uppercase',
                 }}
               >
-                MODEL OPTIMIZER
+                OPTIMISEUR DE MODÈLES
               </label>
               <select
                 value={optimizer}
@@ -328,8 +328,8 @@ export default function TaskExecutionModal({
                   outline: 'none',
                 }}
               >
-                <option value="static">static (registry ratings)</option>
-                <option value="learned">learned (statistics from past runs)</option>
+                <option value="static">statique (notes du registre)</option>
+                <option value="learned">appris (statistiques des exécutions passées)</option>
               </select>
             </div>
 
@@ -344,11 +344,11 @@ export default function TaskExecutionModal({
               }}
             >
               <button type="button" className="btn btn-ghost" onClick={onClose}>
-                Cancel
+                Annuler
               </button>
               <button type="submit" className="btn btn-primary" disabled={loading}>
                 <Play size={12} fill="currentColor" />
-                <span>{loading ? 'Compiling & Running CEG...' : 'Execute Task'}</span>
+                <span>{loading ? 'Compiling & Running CEG...' : 'Exécuter'}</span>
               </button>
             </div>
           </form>

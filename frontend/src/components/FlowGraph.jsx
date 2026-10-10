@@ -22,6 +22,7 @@ import {
   UserCheck,
   Layers,
 } from 'lucide-react';
+import { statusLabel } from '../status';
 
 // ── Status Styling Helper ───────────────────────────────────────────────────
 const getStatusStyles = (status) => {
@@ -136,13 +137,13 @@ export function CEGNodeComponent({ data, selected }) {
               letterSpacing: '0.04em',
             }}
           >
-            {status}
+            {statusLabel(status)}
           </span>
         </div>
 
         {isSubgraph && (
           <span
-            title="Nested Subgraph Node"
+            title="Sous-graphe (équipe)"
             style={{
               fontFamily: 'var(--font-mono)',
               fontSize: '0.6rem',
@@ -162,7 +163,7 @@ export function CEGNodeComponent({ data, selected }) {
 
         {isHITL && !isSubgraph && (
           <span
-            title="Human-in-the-Loop Interruption Node"
+            title="Approbation humaine requise"
             style={{
               fontFamily: 'var(--font-mono)',
               fontSize: '0.6rem',
@@ -204,7 +205,7 @@ export function CEGNodeComponent({ data, selected }) {
           fontFamily: 'var(--font-mono)',
           fontWeight: 600,
           fontSize: '0.8125rem',
-          color: '#f8fafc',
+          color: 'var(--text-primary)',
           letterSpacing: '-0.01em',
           wordBreak: 'break-word',
           lineHeight: 1.3,
@@ -478,7 +479,7 @@ function FlowInner({
               color: 'var(--text-dim)',
             }}
           >
-            {nodes.length} nodes • {edges.length} edges
+            {nodes.length} étapes • {edges.length} arêtes
           </span>
         </div>
       </div>
@@ -497,7 +498,7 @@ function FlowInner({
               fontSize: '0.875rem',
             }}
           >
-            No graph nodes loaded
+            Aucun graphe à afficher
           </div>
         ) : (
           <ReactFlow

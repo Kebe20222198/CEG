@@ -54,9 +54,9 @@ export default function ExecutionCompare({ executions, apiBaseUrl }) {
   const scoreDelta = (a, b) => (a == null || b == null ? null : (b - a) * 100);
   const qualityDiff = scoreDelta(metricsA?.quality_score, metricsB?.quality_score);
   const compositeDiff = scoreDelta(metricsA?.composite_score, metricsB?.composite_score);
-  const formatScore = (v) => (v == null ? 'n/a' : `${(v * 100).toFixed(1)}%`);
+  const formatScore = (v) => (v == null ? 'n.d.' : `${(v * 100).toFixed(1)}%`);
   const formatDelta = (d) =>
-    d == null ? 'n/a' : d >= 0 ? `+${d.toFixed(1)}%` : `${d.toFixed(1)}%`;
+    d == null ? 'n.d.' : d >= 0 ? `+${d.toFixed(1)}%` : `${d.toFixed(1)}%`;
   const deltaColor = (d) =>
     d == null
       ? 'var(--text-muted)'
@@ -88,7 +88,7 @@ export default function ExecutionCompare({ executions, apiBaseUrl }) {
               textTransform: 'uppercase',
             }}
           >
-            BASELINE (EXECUTION A)
+            RÉFÉRENCE (EXÉCUTION A)
           </div>
           <select
             value={execIdA}
@@ -127,7 +127,7 @@ export default function ExecutionCompare({ executions, apiBaseUrl }) {
               textTransform: 'uppercase',
             }}
           >
-            COMPARISON (EXECUTION B)
+            COMPARAISON (EXÉCUTION B)
           </div>
           <select
             value={execIdB}
@@ -171,7 +171,7 @@ export default function ExecutionCompare({ executions, apiBaseUrl }) {
           }}
         >
           <div style={{ fontSize: '0.6875rem', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
-            COST DELTA (B vs A)
+            ÉCART DE COÛT (B vs A)
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginTop: '4px' }}>
             <span className="mono" style={{ fontSize: '1.25rem', fontWeight: 700 }}>
@@ -200,7 +200,7 @@ export default function ExecutionCompare({ executions, apiBaseUrl }) {
           }}
         >
           <div style={{ fontSize: '0.6875rem', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
-            LATENCY DELTA
+            ÉCART DE LATENCE
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginTop: '4px' }}>
             <span className="mono" style={{ fontSize: '1.25rem', fontWeight: 700 }}>
@@ -229,7 +229,7 @@ export default function ExecutionCompare({ executions, apiBaseUrl }) {
           }}
         >
           <div style={{ fontSize: '0.6875rem', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
-            QUALITY SCORE DELTA
+            ÉCART DE QUALITÉ
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginTop: '4px' }}>
             <span className="mono" style={{ fontSize: '1.25rem', fontWeight: 700 }}>
@@ -258,7 +258,7 @@ export default function ExecutionCompare({ executions, apiBaseUrl }) {
           }}
         >
           <div style={{ fontSize: '0.6875rem', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
-            COMPOSITE SCORE DELTA
+            ÉCART DE SCORE COMPOSITE
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginTop: '4px' }}>
             <span className="mono" style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--accent-primary)' }}>
@@ -290,7 +290,7 @@ export default function ExecutionCompare({ executions, apiBaseUrl }) {
         <FlowGraph
           graphData={detailA?.graph}
           nodeStatuses={detailA?.workflow_state?.node_statuses || {}}
-          title={`Graph A: ${detailA?.scenario_name || 'Loading...'}`}
+          title={`Graphe A : ${detailA?.scenario_name || 'chargement…'}`}
           height="460px"
           showMiniMap={false}
         />
@@ -299,7 +299,7 @@ export default function ExecutionCompare({ executions, apiBaseUrl }) {
         <FlowGraph
           graphData={detailB?.graph}
           nodeStatuses={detailB?.workflow_state?.node_statuses || {}}
-          title={`Graph B: ${detailB?.scenario_name || 'Loading...'}`}
+          title={`Graphe B : ${detailB?.scenario_name || 'chargement…'}`}
           height="460px"
           showMiniMap={false}
         />

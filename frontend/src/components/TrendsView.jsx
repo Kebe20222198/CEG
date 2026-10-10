@@ -103,7 +103,7 @@ export default function TrendsView({ executions, apiBaseUrl }) {
           fontSize: '0.875rem',
         }}
       >
-        // Calculating temporal trends and evaluation performance...
+        Calcul des tendances…
       </div>
     );
   }
@@ -131,7 +131,7 @@ export default function TrendsView({ executions, apiBaseUrl }) {
               color: 'var(--text-primary)',
             }}
           >
-            PERFORMANCE & METRICS TRENDS ({chartData.length} RUNS)
+            TENDANCES ({chartData.length} EXÉCUTIONS)
           </span>
         </div>
 
@@ -142,7 +142,7 @@ export default function TrendsView({ executions, apiBaseUrl }) {
             color: 'var(--text-muted)',
           }}
         >
-          Historical Aggregation
+          Historique
         </span>
       </div>
 
@@ -175,7 +175,7 @@ export default function TrendsView({ executions, apiBaseUrl }) {
                   textTransform: 'uppercase',
                 }}
               >
-                Cost Evolution ($ USD)
+                Coût ($)
               </span>
             </div>
           </div>
@@ -193,7 +193,7 @@ export default function TrendsView({ executions, apiBaseUrl }) {
                 <XAxis dataKey="name" stroke="#484f58" tick={{ fill: '#8b949e', fontSize: 10, fontFamily: 'var(--font-mono)' }} />
                 <YAxis stroke="#484f58" tick={{ fill: '#8b949e', fontSize: 10, fontFamily: 'var(--font-mono)' }} />
                 <Tooltip content={<CustomTooltip />} />
-                <Area type="monotone" dataKey="cost" name="Cost" stroke="#0ea5e9" strokeWidth={1.5} fillOpacity={1} fill="url(#costGrad)" />
+                <Area type="monotone" dataKey="cost" name="Coût" stroke="#0ea5e9" strokeWidth={1.5} fillOpacity={1} fill="url(#costGrad)" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -220,7 +220,7 @@ export default function TrendsView({ executions, apiBaseUrl }) {
                   textTransform: 'uppercase',
                 }}
               >
-                Execution Latency (ms)
+                Latence (ms)
               </span>
             </div>
           </div>
@@ -238,7 +238,7 @@ export default function TrendsView({ executions, apiBaseUrl }) {
                 <XAxis dataKey="name" stroke="#484f58" tick={{ fill: '#8b949e', fontSize: 10, fontFamily: 'var(--font-mono)' }} />
                 <YAxis stroke="#484f58" tick={{ fill: '#8b949e', fontSize: 10, fontFamily: 'var(--font-mono)' }} />
                 <Tooltip content={<CustomTooltip />} />
-                <Area type="monotone" dataKey="latency" name="Latency (ms)" stroke="#8b5cf6" strokeWidth={1.5} fillOpacity={1} fill="url(#latencyGrad)" />
+                <Area type="monotone" dataKey="latency" name="Latence (ms)" stroke="#8b5cf6" strokeWidth={1.5} fillOpacity={1} fill="url(#latencyGrad)" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -265,7 +265,7 @@ export default function TrendsView({ executions, apiBaseUrl }) {
                   textTransform: 'uppercase',
                 }}
               >
-                Composite Evaluation Score (%)
+                Score composite (%)
               </span>
             </div>
           </div>
@@ -277,7 +277,7 @@ export default function TrendsView({ executions, apiBaseUrl }) {
                 <XAxis dataKey="name" stroke="#484f58" tick={{ fill: '#8b949e', fontSize: 10, fontFamily: 'var(--font-mono)' }} />
                 <YAxis domain={[0, 100]} stroke="#484f58" tick={{ fill: '#8b949e', fontSize: 10, fontFamily: 'var(--font-mono)' }} />
                 <Tooltip content={<CustomTooltip />} />
-                <Line type="monotone" dataKey="composite" name="Composite Score (%)" stroke="#0ea5e9" strokeWidth={2} dot={{ fill: '#0ea5e9', r: 3 }} />
+                <Line type="monotone" dataKey="composite" name="Score composite (%)" stroke="#0ea5e9" strokeWidth={2} dot={{ fill: '#0ea5e9', r: 3 }} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -304,7 +304,7 @@ export default function TrendsView({ executions, apiBaseUrl }) {
                   textTransform: 'uppercase',
                 }}
               >
-                Quality Score (%)
+                Qualité (%)
               </span>
             </div>
           </div>
@@ -316,7 +316,7 @@ export default function TrendsView({ executions, apiBaseUrl }) {
                 <XAxis dataKey="name" stroke="#484f58" tick={{ fill: '#8b949e', fontSize: 10, fontFamily: 'var(--font-mono)' }} />
                 <YAxis domain={[0, 100]} stroke="#484f58" tick={{ fill: '#8b949e', fontSize: 10, fontFamily: 'var(--font-mono)' }} />
                 <Tooltip content={<CustomTooltip />} />
-                <Line type="monotone" dataKey="quality" name="Quality Score (%)" stroke="#10b981" strokeWidth={2} dot={{ fill: '#10b981', r: 3 }} />
+                <Line type="monotone" dataKey="quality" name="Qualité (%)" stroke="#10b981" strokeWidth={2} dot={{ fill: '#10b981', r: 3 }} />
               </LineChart>
             </ResponsiveContainer>
           </div>

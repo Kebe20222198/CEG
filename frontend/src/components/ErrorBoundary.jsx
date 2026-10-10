@@ -40,7 +40,7 @@ export default class ErrorBoundary extends React.Component {
           >
             <AlertCircle size={24} />
             <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>
-              UI Rendering Error caught by ErrorBoundary
+              Erreur d'affichage
             </h3>
           </div>
 
@@ -67,7 +67,7 @@ export default class ErrorBoundary extends React.Component {
               window.location.reload();
             }}
           >
-            <RefreshCw size={14} /> Reload Studio
+            <RefreshCw size={14} /> Recharger le Studio
           </button>
         </div>
       );

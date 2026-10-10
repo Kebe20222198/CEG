@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Workflow, Play, RefreshCw, AlertTriangle, Info, Search } from 'lucide-react';
 import { apiGet, apiPost, formatDate } from '../api';
 import { href, navigate } from '../router';
+import StatusPill from '../components/StatusPill';
 
 // Home page: every workflow of the platform, like Airflow's DAG list.
 
@@ -221,10 +222,7 @@ export default function WorkflowsPage({ onRun }) {
                     <td>
                       {w.last_run ? (
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
-                          <span className={`status-pill ${w.last_run.status}`}>
-                            <span className="status-pill-dot" />
-                            <span>{w.last_run.status}</span>
-                          </span>
+                          <StatusPill status={w.last_run.status} />
                           <span className="small muted nowrap">{formatDate(w.last_run.started_at)}</span>
                         </div>
                       ) : (

@@ -262,7 +262,7 @@ state = workflow.resume("run-1", value=True)    # False ou {"approved": False} p
 
 ## 🖥️ CEG Studio
 
-L'interface s'organise comme celle d'Airflow : une barre latérale (**Workflows**, **Exécutions**, **À approuver**, **Comparer**, **Tendances**, **Modèles & optimiseur**), un fil d'Ariane, et une URL par vue (`#/workflows/tri_tickets_support/grid`, `#/runs/exec_…/timeline`) que l'on peut partager ou mettre en favori. Thème clair ou sombre.
+L'interface s'organise comme celle d'Airflow : une barre latérale (**Workflows**, **Exécutions**, **À approuver**, **Comparer**, **Tendances**, **Modèles & optimiseur**), un fil d'Ariane, et une URL par vue (`#/workflows/tri_tickets_support/grid`, `#/runs/exec_…/timeline`) que l’on peut partager ou mettre en favori. Thème clair ou sombre (par défaut, celui du système).
 
 | Page | Contenu |
 |---|---|

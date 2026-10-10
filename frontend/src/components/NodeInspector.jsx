@@ -12,6 +12,7 @@ import {
   Terminal,
   Layers,
 } from 'lucide-react';
+import StatusPill from './StatusPill';
 
 export default function NodeInspector({
   selectedNode,
@@ -54,7 +55,7 @@ export default function NodeInspector({
       >
         <Terminal size={32} style={{ marginBottom: '12px', opacity: 0.4 }} />
         <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8125rem' }}>
-          Select a node on the graph to inspect runtime trace & state
+          Sélectionnez une étape du graphe pour voir sa trace et son état
         </div>
       </div>
     );
@@ -84,13 +85,10 @@ export default function NodeInspector({
       >
         <div className="ide-title">
           <Code size={13} color="var(--accent-primary)" />
-          <span>INSPECTOR // {nodeId}</span>
+          <span>ÉTAPE // {nodeId}</span>
         </div>
 
-        <div className={`status-pill ${status}`}>
-          <span className="status-pill-dot" />
-          <span>{status}</span>
-        </div>
+        <StatusPill status={status} />
       </div>
 
       {/* Content Area with dense developer tools layout */}
@@ -123,7 +121,7 @@ export default function NodeInspector({
                 marginBottom: '4px',
               }}
             >
-              OBJECTIVE
+              OBJECTIF
             </div>
             <div style={{ fontSize: '0.8125rem', color: 'var(--text-primary)' }}>
               {selectedNode.objective}
@@ -159,7 +157,7 @@ export default function NodeInspector({
               }}
             >
               <Cpu size={12} color="var(--accent-primary)" />
-              <span>MODEL</span>
+              <span>MODÈLE</span>
             </div>
             <div
               className="mono"
@@ -193,7 +191,7 @@ export default function NodeInspector({
               }}
             >
               <Clock size={12} color="var(--accent-purple)" />
-              <span>LATENCY</span>
+              <span>LATENCE</span>
             </div>
             <div
               className="mono"
@@ -227,7 +225,7 @@ export default function NodeInspector({
               }}
             >
               <DollarSign size={12} color="var(--accent-cyan)" />
-              <span>COST</span>
+              <span>COÛT</span>
             </div>
             <div
               className="mono"
@@ -257,7 +255,7 @@ export default function NodeInspector({
                 marginBottom: '2px',
               }}
             >
-              TOKENS IN / OUT
+              TOKENS ENTRÉE / SORTIE
             </div>
             <div
               className="mono"
@@ -304,7 +302,7 @@ export default function NodeInspector({
                     fontWeight: 600,
                   }}
                 >
-                  ENCAPSULATED SUBGRAPH ({selectedNode.subgraph.nodes?.length || 0} NODES)
+                  SOUS-GRAPHE ({selectedNode.subgraph.nodes?.length || 0} ÉTAPES)
                 </span>
               </div>
               {expandedSections.subgraph ? <ChevronDown size={14} color="#38bdf8" /> : <ChevronRight size={14} color="#38bdf8" />}
@@ -345,7 +343,7 @@ export default function NodeInspector({
           </div>
         )}
 
-        {/* Runtime Decision / Fallback Section */}
+        {/* Décision du moteur / Fallback Section */}
         {traceInfo?.decision && (
           <div
             style={{
@@ -375,7 +373,7 @@ export default function NodeInspector({
                   textTransform: 'uppercase',
                 }}
               >
-                Runtime Decision
+                Décision du moteur
               </span>
               {expandedSections.decision ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             </div>
@@ -424,7 +422,7 @@ export default function NodeInspector({
                   textTransform: 'uppercase',
                 }}
               >
-                Fallback Strategy Triggered
+                Fallbacks déclenchés
               </div>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
                 {typeof traceInfo.fallbacks_triggered === 'string'
@@ -468,17 +466,17 @@ export default function NodeInspector({
               }}
             >
               {expandedSections.output ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-              <span>Node Output Payload</span>
+              <span>Sortie de l'étape</span>
             </div>
 
             {outputData && (
               <button
                 className="btn btn-ghost btn-sm"
                 onClick={() => handleCopyJSON(outputData)}
-                title="Copy JSON"
+                title="Copier le JSON"
               >
                 {copied ? <Check size={12} color="var(--accent-emerald)" /> : <Copy size={12} />}
-                <span style={{ fontSize: '0.6875rem' }}>{copied ? 'Copied' : 'Copy'}</span>
+                <span style={{ fontSize: '0.6875rem' }}>{copied ? 'Copié' : 'Copier'}</span>
               </button>
             )}
           </div>
@@ -517,7 +515,7 @@ export default function NodeInspector({
                     color: 'var(--text-dim)',
                   }}
                 >
-                  // No output available for pending node
+                  Pas encore de sortie pour cette étape
                 </span>
               )}
             </div>

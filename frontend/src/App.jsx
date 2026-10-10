@@ -13,10 +13,10 @@ import {
 } from 'lucide-react';
 import './studio.css';
 import ErrorBoundary from './components/ErrorBoundary';
-import ExecutionList from './components/ExecutionList';
 import TaskExecutionModal from './components/TaskExecutionModal';
 import WorkflowsPage from './pages/WorkflowsPage';
 import ApprovalsPage from './pages/ApprovalsPage';
+import RunsPage from './pages/RunsPage';
 import ModelsPage from './pages/ModelsPage';
 import { API_BASE_URL, apiGet } from './api';
 import { href, navigate, useRoute } from './router';
@@ -38,12 +38,16 @@ const NAV = [
   { path: '/models', label: 'Modèles & optimiseur', icon: Cpu },
 ];
 
+// The user's choice if any, otherwise the system's light/dark preference.
 function readTheme() {
+  let stored = null;
   try {
-    return localStorage.getItem('ceg-theme') || 'dark';
+    stored = localStorage.getItem('ceg-theme');
   } catch {
-    return 'dark';
+    // storage unavailable
   }
+  if (stored) return stored;
+  return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
 }
 
 export default function App() {
@@ -107,17 +111,7 @@ export default function App() {
   } else if (section === 'runs' && id) {
     page = <RunPage runId={id} tab={tab} onRunNew={() => openRun()} />;
   } else if (section === 'runs') {
-    page = (
-      <>
-        <div className="page-header">
-          <div>
-            <h1 className="page-title">Exécutions</h1>
-            <p className="page-subtitle">Toutes les exécutions, de tous les workflows.</p>
-          </div>
-        </div>
-        <ExecutionList executions={executions} onSelectExecution={(runId) => navigate(`/runs/${runId}`)} />
-      </>
-    );
+    page = <RunsPage executions={executions} onRefresh={loadExecutions} />;
   } else if (section === 'approvals') {
     page = <ApprovalsPage onChanged={loadExecutions} />;
   } else if (section === 'compare') {

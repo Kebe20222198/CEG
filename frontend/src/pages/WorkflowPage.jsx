@@ -14,6 +14,7 @@ import CodeViewer from '../components/CodeViewer';
 import RunGrid, { GridLegend } from '../components/RunGrid';
 import { apiGet, formatCost, formatDate, formatMs } from '../api';
 import { href, navigate } from '../router';
+import StatusPill from '../components/StatusPill';
 
 // One workflow, like an Airflow DAG page: Grid, Graph, Code, Source, Runs,
 // Details — each tab has its own URL (#/workflows/<id>/<tab>).
@@ -170,10 +171,7 @@ export default function WorkflowPage({ workflowId, tab = 'grid', onRun }) {
                   <tr key={run.id} className="clickable" onClick={() => navigate(`/runs/${run.id}`)}>
                     <td className="mono">{run.id}</td>
                     <td>
-                      <span className={`status-pill ${run.status}`}>
-                        <span className="status-pill-dot" />
-                        <span>{run.status}</span>
-                      </span>
+                      <StatusPill status={run.status} />
                     </td>
                     <td className="small muted">{formatDate(run.started_at)}</td>
                     <td className="mono small">{run.backend || '—'}</td>

@@ -5,6 +5,7 @@ import Timeline from '../components/Timeline';
 import CodeViewer from '../components/CodeViewer';
 import { API_BASE_URL, apiGet, formatCost, formatDate, formatMs } from '../api';
 import { href, navigate } from '../router';
+import StatusPill from '../components/StatusPill';
 
 // One execution: graph and trace, timeline, raw state (#/runs/<id>/<tab>).
 
@@ -36,10 +37,7 @@ export default function RunPage({ runId, tab = 'trace', onRunNew }) {
         <div>
           <h1 className="page-title mono" style={{ fontSize: '1.125rem' }}>{run.id}</h1>
           <div className="meta-row">
-            <span className={`status-pill ${run.status}`}>
-              <span className="status-pill-dot" />
-              <span>{run.status}</span>
-            </span>
+            <StatusPill status={run.status} />
             {run.task_id && (
               <a className="chip accent" href={href(`/workflows/${run.task_id}/grid`)} style={{ textDecoration: 'none' }}>
                 {run.task_id}
