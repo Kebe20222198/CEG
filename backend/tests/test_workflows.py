@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.main import app
+from ceg.backends import available_backends
 from ceg.codegen import task_to_python
 from ceg.models.task import CognitiveTask, RepeatSpec, SubTask, TaskConstraint
 from ceg.registry import WorkflowDefinition
@@ -101,7 +102,7 @@ class TestWorkflowsApi:
         } <= set(workflows)
         sales = workflows["analyse_ventes_alertes"]
         assert sales["valid"] and sales["steps"] == 5
-        assert sales["backends"] == ["langgraph", "python"]
+        assert sales["backends"] == [b.name for b in available_backends()]
         assert sales["constraints"]["max_cost_usd"] == 0.5
 
     def test_approval_workflows_only_list_backends_that_support_it(

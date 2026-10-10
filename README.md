@@ -2,7 +2,7 @@
 
 **CEG (Cognitive Execution Graph)** est une plateforme et un framework **agnostiques** — vis-à-vis du framework agentique, de l'infrastructure et du fournisseur de LLM — qui ajoutent une **couche d'abstraction déclarative** au-dessus des workflows d'agents. On décrit l'**objectif métier**, les **contraintes** (budget, latence, qualité, outils autorisés) et le découpage en sous-tâches ; CEG se charge de **traduire** cette déclaration en workflow, de décider **comment l'exécuter** et de **choisir les modèles** adaptés à chaque étape.
 
-C'est, à peu près, ce que fait **SQL** pour les bases de données relationnelles : on écrit *quoi* obtenir, le moteur décide *comment*. Aujourd'hui, CEG exécute ses plans avec **LangGraph** et avec un **backend Python** sans framework, qui sert de seconde implémentation de référence ; d'autres moteurs peuvent s'ajouter sans changer les déclarations.
+C'est, à peu près, ce que fait **SQL** pour les bases de données relationnelles : on écrit *quoi* obtenir, le moteur décide *comment*. Aujourd'hui, CEG exécute le **même plan** avec **LangGraph**, avec **CrewAI** (Flows) et avec un **backend Python** sans framework, qui sert d'implémentation de référence — et donne le même résultat sur les trois ; d'autres moteurs peuvent s'ajouter sans changer les déclarations.
 
 > ⚠️ **Exécution simulée.** Les nœuds sont exécutés par des exécuteurs Python déterministes (`MockExecutor` et ses sous-classes métier), pas par de vrais appels LLM. Le coût et la latence d'un nœud sont ceux du modèle simulé choisi par le Runtime Decision Engine, et la qualité est notée par `MockJudgeClient`, dont les scores ne dépendent pas du contenu des sorties. Voir [Limites connues](#-limites-connues).
 
@@ -60,7 +60,7 @@ ceg run validation_budget_hitl --approve ask   # les approbations se font dans l
 | Requête déclarative | `CognitiveTask` : objectif, contraintes, sous-tâches | `ceg.models.task` |
 | Planificateur | `plan(task)` → graphe d'exécution (`CEGGraph`), indépendant du moteur | `ceg.planner` |
 | Optimiseur par coût | Choix du modèle par nœud sous contraintes (Runtime Decision Engine) | `ceg.runtime` |
-| Moteur d'exécution | Backend : `langgraph`, `python`, … | `ceg.backends` |
+| Moteur d'exécution | Backend : `langgraph`, `crewai`, `python`, … | `ceg.backends` |
 | `EXPLAIN` | Traces, décisions et fallbacks enregistrés, CEG Studio | API + frontend |
 
 ```python
@@ -115,11 +115,14 @@ La base SQLite `backend/ceg.db` est créée au premier démarrage de l'API ; ell
 
 ### 1. Démarrer le Backend (API REST FastAPI)
 
+Un seul environnement Python pour tout le projet, en **Python 3.13** (version fixée par `.python-version` ; CrewAI ne supporte pas encore 3.14) :
+
 ```bash
-# Activer l'environnement virtuel
+# Créer l'environnement (une seule fois) — avec uv, ou python3.13 -m venv .venv
+uv venv --python 3.13 .venv
 source .venv/bin/activate
 
-# Installer le backend en mode éditable
+# Installer le backend en mode éditable : API, CLI, outils de test et les trois backends
 pip install -e "backend[dev]"
 
 # Lancer le serveur d'API REST sur le port 8000
@@ -169,7 +172,7 @@ npm run dev
 
 ```bash
 cd backend
-pytest                      # 429 tests (base SQLite temporaire, jamais ceg.db)
+pytest                      # 454 tests (base SQLite temporaire, jamais ceg.db)
 ruff check . && ruff format --check .
 mypy                        # mode strict sur src/, api/ et tests/
 
@@ -177,7 +180,7 @@ cd ../frontend
 npm run lint && npm run build
 ```
 
-La CI GitHub Actions exécute ces mêmes vérifications (backend sur Python 3.10 à 3.12, frontend sur Node 22).
+La CI GitHub Actions exécute ces mêmes vérifications (backend sur Python 3.10 à 3.13 avec les trois backends, frontend sur Node 22).
 
 ---
 
@@ -244,9 +247,22 @@ Un moteur fourni par l'appelant peut être plus strict que la déclaration, jama
 | Backend | Exécution | Human-in-the-Loop |
 |---|---|---|
 | `langgraph` (défaut) | `StateGraph` LangGraph, branches parallèles par super-steps | ✅ via checkpointer |
+| `crewai` (extra) | `Flow` CrewAI généré à partir du plan, branches parallèles concurrentes | ❌ refusé (sauf `ignore_interrupts=True`) |
 | `python` | Interpréteur Python sans framework, branches exécutées l'une après l'autre | ❌ refusé (sauf `ignore_interrupts=True`) |
 
-Les deux backends partagent la logique d'un nœud (sélection du modèle, fallbacks, sous-graphes) et les contrôles de contraintes (`ceg.backends.common`). Les tests (`tests/test_backends.py`) vérifient que **la même tâche donne exactement le même résultat** sur les deux : statuts, sorties, coût, latence et modèle choisi pour chaque nœud, sur tous les pipelines de démonstration. Un backend qui ne sait pas faire une chose déclarée (ici, une approbation humaine) **refuse** le plan plutôt que de l'ignorer.
+Les backends partagent la logique d'un nœud (sélection du modèle, fallbacks, sous-graphes) et les contrôles de contraintes (`ceg.backends.common`). Les tests (`tests/test_backends.py`) vérifient que **la même tâche donne exactement le même résultat** sur tous : statuts, sorties, coût, latence et modèle choisi pour chaque nœud, sur tous les pipelines de démonstration. Un backend qui ne sait pas faire une chose déclarée (ici, une approbation humaine) **refuse** le plan plutôt que de l'ignorer.
+
+**CrewAI** : le plan est traduit en une sous-classe de `crewai.flow.Flow`, comme l'écrirait un développeur CrewAI — chaque nœud devient une méthode, une dépendance `@listen("noeud")`, une jointure `@listen(and_(...))`, une boucle un `@router` qui relance le corps de boucle ou laisse continuer ; une condition est vérifiée par le nœud qu'elle garde. CrewAI est installé avec `backend[dev]` ; un utilisateur qui n'en a pas besoin peut installer CEG sans lui (le backend `crewai` n'est alors simplement pas proposé, ou s'ajoute avec l'extra `ceg[crewai]`). Télémétrie et traces CrewAI sont désactivées.
+
+```bash
+ceg run analyse_ventes_parallele --backend crewai
+```
+
+```python
+workflow = get_backend("crewai").compile(graph)
+workflow.flow_class          # la sous-classe de crewai.flow.Flow générée
+state = workflow.invoke()    # même état final qu'avec langgraph et python
+```
 
 **Human-in-the-Loop sur LangGraph** : un graphe avec points d'approbation refuse de compiler sans checkpointer, pour qu'une approbation ne soit jamais contournée silencieusement.
 
@@ -587,6 +603,7 @@ frontend/
 
 - **Exécution et jugement simulés** : pas d'appel LLM réel (voir l'encadré en tête). Les scores de qualité du `MockJudgeClient` ne mesurent pas la qualité des sorties ; brancher un vrai `JudgeClient` est nécessaire pour toute conclusion sur la qualité.
 - **Backend `python`** : pas d'approbation humaine, et les branches indépendantes s'exécutent l'une après l'autre (pas de vrai parallélisme). La latence contrôlée est la **somme** des latences des nœuds, pas le temps réel écoulé.
+- **Backend `crewai`** : pas d'approbation humaine (le *human feedback* de CrewAI ne correspond pas encore aux approbations CEG), Python 3.10–3.13 (sur Mac Intel, CrewAI ≤ 1.9 : les versions récentes dépendent de `lancedb`, absent de cette plateforme), et une boucle dont une étape attend aussi un nœud extérieur à la boucle est refusée (l'`and_` de CrewAI l'attendrait indéfiniment au second tour). Les nœuds restent des appels CEG simulés : ce ne sont pas (encore) des `Agent`/`Crew` CrewAI.
 - **Pauses HITL en mémoire** : le checkpointer de l'API est un `MemorySaver`. Une exécution en attente d'approbation ne survit pas à un redémarrage de l'API ; sa reprise échoue alors avec un message explicite.
 - **Pas d'authentification** sur l'API : à ne pas exposer en dehors d'un poste de développement.
 - **Migrations** : `init_db()` ajoute les colonnes manquantes, mais ne gère ni renommage ni suppression ; Alembic sera nécessaire pour des évolutions plus lourdes du schéma.

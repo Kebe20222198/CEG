@@ -9,7 +9,9 @@ whichever backend runs it.
 Available backends:
   - ``langgraph``: LangGraph StateGraph (parallel super-steps, checkpoints,
     human-in-the-loop pauses);
-  - ``python``: a plain Python interpreter, no framework (no HITL).
+  - ``python``: a plain Python interpreter, no framework (no HITL);
+  - ``crewai``: a CrewAI Flow (no HITL) — only when the ``crewai`` extra is
+    installed.
 """
 
 from __future__ import annotations
@@ -98,7 +100,14 @@ def _registry() -> dict[str, Backend]:
     from ceg.backends.langgraph import LangGraphBackend
     from ceg.backends.python import PythonBackend
 
-    return {b.name: b for b in (LangGraphBackend(), PythonBackend())}
+    backends: list[Backend] = [LangGraphBackend(), PythonBackend()]
+    try:
+        from ceg.backends.crewai import CrewAIBackend
+    except ImportError:  # optional extra: pip install -e ".[crewai]"
+        pass
+    else:
+        backends.append(CrewAIBackend())
+    return {b.name: b for b in backends}
 
 
 __all__ = [

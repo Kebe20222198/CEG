@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from ceg.backends import get_backend
+from ceg.backends import available_backends, get_backend
 from ceg.compiler.mock_executor import MockExecutor
 from ceg.evaluation.engine import EvaluationEngine
 from ceg.evaluation.judge import MockJudgeClient
@@ -24,7 +24,8 @@ from ceg.runtime.fallback import NodeAbortError
 from ceg.use_cases.demo_pipelines import LoopReportExecutor, build_loop_report_graph
 from ceg.use_cases.sales_criteria import ALL_SALES_CRITERIA
 
-BACKENDS = ["langgraph", "python"]
+# Every installed backend (crewai only with its optional extra).
+BACKENDS = [b.name for b in available_backends()]
 
 
 def _chain(tier: str, n: int, **constraints: Any) -> CognitiveTask:

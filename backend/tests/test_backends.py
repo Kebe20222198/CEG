@@ -2,8 +2,9 @@
 
 This is what "backend-agnostic" means in CEG: the plan does not depend on
 the engine that runs it. Each demo pipeline runs on LangGraph and on the
-plain-Python backend; statuses, outputs, costs, latencies and the models
-chosen for every node must be identical.
+plain-Python backend — and on CrewAI Flows when the ``crewai`` extra is
+installed; statuses, outputs, costs, latencies and the models chosen for
+every node must be identical.
 """
 
 from __future__ import annotations
@@ -36,6 +37,9 @@ from ceg.use_cases.multi_agent_supervisor import (
 from ceg.use_cases.sales_pipeline import SalesExecutor, build_sales_graph
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+BACKENDS = sorted(b.name for b in available_backends())
+OTHER_BACKENDS = [b for b in BACKENDS if b != "langgraph"]
 
 # The sales alert prints its generation date: both backends must see the same
 # clock, otherwise two runs straddling a second boundary differ.
@@ -87,10 +91,14 @@ def _fingerprint(state: dict[str, Any]) -> dict[str, Any]:
 
 
 class TestRegistry:
-    def test_both_backends_are_registered(self) -> None:
+    def test_builtin_backends_are_registered(self) -> None:
         names = {b.name for b in available_backends()}
-        assert names == {"langgraph", "python"}
+        assert {"langgraph", "python"} <= names <= {"langgraph", "python", "crewai"}
         assert DEFAULT_BACKEND == "langgraph"
+
+    def test_crewai_is_registered_when_installed(self) -> None:
+        pytest.importorskip("crewai")
+        assert not get_backend("crewai").supports_hitl
 
     def test_unknown_backend(self) -> None:
         with pytest.raises(ValueError, match="Unknown backend"):
@@ -102,17 +110,18 @@ class TestRegistry:
 
 
 class TestParity:
+    @pytest.mark.parametrize("backend", OTHER_BACKENDS)
     @pytest.mark.parametrize("case", sorted(CASES))
-    def test_same_result_on_every_backend(self, case: str) -> None:
+    def test_same_result_as_langgraph(self, case: str, backend: str) -> None:
         reference = _fingerprint(_run("langgraph", case))
-        assert _fingerprint(_run("python", case)) == reference
+        assert _fingerprint(_run(backend, case)) == reference
 
     def test_python_backend_needs_no_langgraph_objects(self) -> None:
         workflow = get_backend("python").compile(build_parallel_sales_graph())
         assert workflow.metadata["runtime_target"] == "python"
         assert workflow.metadata["has_parallel"]
 
-    @pytest.mark.parametrize("backend", ["langgraph", "python"])
+    @pytest.mark.parametrize("backend", BACKENDS)
     def test_abort_is_the_same_and_partial_state_is_kept(self, backend: str) -> None:
         graph = build_sales_graph()
         compiler_kwargs: dict[str, Any] = {"executor": SalesExecutor()}
@@ -126,13 +135,14 @@ class TestParity:
         assert workflow.get_state("t1").values["inputs"] == inputs
 
 
-class TestPythonBackendLimits:
-    def test_hitl_graph_is_refused(self) -> None:
+@pytest.mark.parametrize("backend", OTHER_BACKENDS)
+class TestBackendsWithoutHITL:
+    def test_hitl_graph_is_refused(self, backend: str) -> None:
         with pytest.raises(ValueError, match="human approval"):
-            get_backend("python").compile(build_hitl_budget_graph())
+            get_backend(backend).compile(build_hitl_budget_graph())
 
-    def test_hitl_graph_runs_unattended_on_request(self) -> None:
-        workflow = get_backend("python").compile(
+    def test_hitl_graph_runs_unattended_on_request(self, backend: str) -> None:
+        workflow = get_backend(backend).compile(
             build_hitl_budget_graph(),
             executor=HITLBudgetExecutor(),
             ignore_interrupts=True,
@@ -140,7 +150,81 @@ class TestPythonBackendLimits:
         statuses = workflow.invoke()["node_statuses"]
         assert set(statuses.values()) == {"completed"}
 
-    def test_resume_is_not_supported(self) -> None:
-        workflow = get_backend("python").compile(build_parallel_sales_graph())
+    def test_resume_is_not_supported(self, backend: str) -> None:
+        workflow = get_backend(backend).compile(build_parallel_sales_graph())
         with pytest.raises(RuntimeError, match="human-in-the-loop"):
             workflow.resume("t1")
+
+
+class TestCrewAITranslation:
+    """The plan becomes an ordinary CrewAI Flow: start, listen, and_, router."""
+
+    @pytest.fixture(autouse=True)
+    def _needs_crewai(self) -> None:
+        pytest.importorskip("crewai")
+
+    @staticmethod
+    def _flow_class(graph: CEGGraph) -> Any:
+        from ceg.backends.crewai import CrewAIBackend
+
+        return CrewAIBackend().compile(graph).flow_class
+
+    def test_joins_and_conditions(self) -> None:
+        flow = self._flow_class(build_parallel_sales_graph())
+        assert flow._start_methods == ["begin"]
+        assert flow._listeners["init"] == ("OR", ["begin"])
+        assert flow._listeners["fetch_nord"] == ("OR", ["init"])
+        join = flow._listeners["aggregate_multi"]
+        assert join["type"] == "AND"
+        assert sorted(join["conditions"]) == ["fetch_est", "fetch_nord", "fetch_sud"]
+        # A condition is checked by its target, which still waits for its source.
+        assert flow._listeners["generate_alert"] == ("OR", ["detect_anomaly"])
+        assert not flow._routers
+
+    def test_loop_is_a_router(self) -> None:
+        flow = self._flow_class(build_loop_report_graph())
+        assert flow._routers == {"enter_rediger_brouillon", "route_evaluer_critique"}
+        assert flow._listeners["rediger_brouillon"] == ("OR", ["rediger_brouillon:run"])
+        assert flow._listeners["publier_rapport"] == ("OR", ["evaluer_critique:done"])
+
+    def test_node_ids_clashing_with_flow_are_renamed(self) -> None:
+        from ceg.backends.crewai import method_names
+        from ceg.models.node import CEGNode
+
+        graph = CEGGraph(
+            nodes=[
+                CEGNode(id="state", objective="o"),
+                CEGNode(id="begin", objective="o", dependencies=["state"]),
+                CEGNode(id="mise-en-forme", objective="o", dependencies=["begin"]),
+            ]
+        )
+        assert method_names(graph) == {
+            "state": "node_state",
+            "begin": "node_begin",
+            "mise-en-forme": "node_mise_en_forme",
+        }
+        state = get_backend("crewai").compile(graph).invoke()
+        assert set(state["node_statuses"].values()) == {"completed"}
+
+    def test_loop_waiting_outside_the_loop_is_refused(self) -> None:
+        from ceg.models.graph import CEGEdge, EdgeType
+        from ceg.models.node import CEGNode
+
+        graph = CEGGraph(
+            nodes=[
+                CEGNode(id="a", objective="o"),
+                CEGNode(id="side", objective="o"),
+                CEGNode(id="b", objective="o", dependencies=["a", "side"]),
+            ],
+            edges=[
+                CEGEdge(
+                    source="b",
+                    target="a",
+                    edge_type=EdgeType.LOOP,
+                    condition="again",
+                    loop_max_iterations=2,
+                )
+            ],
+        )
+        with pytest.raises(ValueError, match="outside the loop"):
+            get_backend("crewai").compile(graph)
