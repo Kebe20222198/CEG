@@ -186,7 +186,7 @@ def benchmark_figure(report: dict) -> Path:
         fontsize=6.5,
     )
     path = FIGURES / "benchmark.pdf"
-    fig.savefig(path, bbox_inches="tight")
+    fig.savefig(path, bbox_inches="tight", metadata={"CreationDate": None})
     plt.close(fig)
     return path
 
@@ -268,7 +268,7 @@ def optimizer_figure(report: dict) -> Path:
         ax.set_axisbelow(True)
     left.legend(frameon=False, loc="lower left", fontsize=7)
     path = FIGURES / "optimiseur_appris.pdf"
-    fig.savefig(path, bbox_inches="tight")
+    fig.savefig(path, bbox_inches="tight", metadata={"CreationDate": None})
     plt.close(fig)
     return path
 
