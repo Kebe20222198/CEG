@@ -26,7 +26,289 @@
         "detect": "balanced-standard",
         "report": "fast-mini"
       },
-      "statistics": null
+      "statistics": null,
+      "per_run": [
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.03,
+          "latency_ms": 920.0,
+          "failed_calls": 5,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.03,
+          "latency_ms": 920.0,
+          "failed_calls": 5,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.03,
+          "latency_ms": 920.0,
+          "failed_calls": 5,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.03,
+          "latency_ms": 920.0,
+          "failed_calls": 5,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.03,
+          "latency_ms": 920.0,
+          "failed_calls": 5,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.032,
+          "latency_ms": 1000.0,
+          "failed_calls": 6,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.03,
+          "latency_ms": 920.0,
+          "failed_calls": 5,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.03,
+          "latency_ms": 920.0,
+          "failed_calls": 5,
+          "quality": 0.718,
+          "aborted": false
+        }
+      ]
     },
     "learned": {
       "all_runs": {
@@ -134,6 +416,288 @@
           "n": 49,
           "success_rate": 0.816,
           "mean_quality": 0.463
+        }
+      ],
+      "per_run": [
+        {
+          "cost_usd": 0.028,
+          "latency_ms": 840.0,
+          "failed_calls": 4,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.022,
+          "latency_ms": 700.0,
+          "failed_calls": 3,
+          "quality": 0.65,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.022,
+          "latency_ms": 600.0,
+          "failed_calls": 1,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.022,
+          "latency_ms": 600.0,
+          "failed_calls": 1,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.022,
+          "latency_ms": 600.0,
+          "failed_calls": 1,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.022,
+          "latency_ms": 600.0,
+          "failed_calls": 1,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.024,
+          "latency_ms": 680.0,
+          "failed_calls": 2,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.022,
+          "latency_ms": 600.0,
+          "failed_calls": 1,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.02,
+          "latency_ms": 520.0,
+          "failed_calls": 0,
+          "quality": 0.718,
+          "aborted": false
+        },
+        {
+          "cost_usd": 0.022,
+          "latency_ms": 600.0,
+          "failed_calls": 1,
+          "quality": 0.718,
+          "aborted": false
         }
       ]
     }
