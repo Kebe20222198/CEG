@@ -164,6 +164,16 @@ def compare(
             f"last_{window}_runs": summarize(metrics[-window:]),
             "final_models": metrics[-1].models,
             "statistics": statistics.summary() if statistics else None,
+            "per_run": [
+                {
+                    "cost_usd": round(m.cost, 6),
+                    "latency_ms": round(m.latency_ms, 3),
+                    "failed_calls": m.failed_calls,
+                    "quality": round(m.quality, 4),
+                    "aborted": m.aborted,
+                }
+                for m in metrics
+            ],
         }
     return results
 

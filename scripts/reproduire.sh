@@ -11,6 +11,8 @@
 #   optimiseur_appris.json
 #   benchmark.txt            benchmark « CEG vs workflows à modèle fixe »
 #   benchmark.json
+#   figures/*.pdf            figures du rapport (scripts/figures.py)
+#   tableaux/*.tex           tableaux LaTeX du rapport, générés des JSON
 #
 # Les expériences sont déterministes (simulateur à graine fixe) : deux
 # exécutions donnent les mêmes fichiers, sur n'importe quelle machine.
@@ -64,5 +66,8 @@ step "Expérience : optimiseur statique vs appris"
 step "Benchmark : CEG vs workflows à modèle fixe"
 "$PYTHON" -m ceg.experiments.benchmark --runs "$RUNS" --seed "$SEED" \
   --json "$OUT/benchmark.json" | tee "$OUT/benchmark.txt"
+
+step "Figures et tableaux du rapport"
+"$PYTHON" "$ROOT/scripts/figures.py"
 
 printf '\n✓ Résultats dans %s\n' "${OUT#"$ROOT"/}"

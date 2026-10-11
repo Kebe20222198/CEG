@@ -32,6 +32,8 @@ dev = [
     "httpx>=0.25.0",
     # Every backend is tested in the development environment.
     "crewai>=1.6",
+    # Figures of the report (scripts/figures.py).
+    "matplotlib>=3.8",
 ]
 # Third backend: runs plans as CrewAI Flows (CrewAI supports Python 3.10-3.13).
 crewai = [
