@@ -1,0 +1,237 @@
+{
+  "runs": 40,
+  "seed": 0,
+  "backend": "langgraph",
+  "scenarios": {
+    "large": {
+      "max_cost_usd": 1.0,
+      "max_latency_seconds": 10.0,
+      "min_quality_score": 0.75
+    },
+    "moyen": {
+      "max_cost_usd": 0.15,
+      "max_latency_seconds": 2.0,
+      "min_quality_score": 0.75
+    },
+    "serre": {
+      "max_cost_usd": 0.06,
+      "max_latency_seconds": 1.0,
+      "min_quality_score": 0.75
+    },
+    "exigeant": {
+      "max_cost_usd": 1.0,
+      "max_latency_seconds": 5.0,
+      "min_quality_score": 0.9
+    }
+  },
+  "results": {
+    "large": {
+      "fixe:fast-mini": {
+        "respect": 0.0,
+        "budget_overrun": 0.0,
+        "latency_overrun": 0.0,
+        "incomplete": 1.0,
+        "cost_usd": 0.0125,
+        "latency_ms": 498.0,
+        "failed_calls": 3.23,
+        "quality": 0.405
+      },
+      "fixe:balanced-standard": {
+        "respect": 1.0,
+        "budget_overrun": 0.0,
+        "latency_overrun": 0.0,
+        "incomplete": 0.0,
+        "cost_usd": 0.06,
+        "latency_ms": 1000.0,
+        "failed_calls": 0,
+        "quality": 0.862
+      },
+      "fixe:quality-pro": {
+        "respect": 1.0,
+        "budget_overrun": 0.0,
+        "latency_overrun": 0.0,
+        "incomplete": 0.0,
+        "cost_usd": 0.3,
+        "latency_ms": 2500.0,
+        "failed_calls": 0,
+        "quality": 0.946
+      },
+      "ceg:static": {
+        "respect": 1.0,
+        "budget_overrun": 0.0,
+        "latency_overrun": 0.0,
+        "incomplete": 0.0,
+        "cost_usd": 0.05,
+        "latency_ms": 880.0,
+        "failed_calls": 0,
+        "quality": 0.842
+      },
+      "ceg:learned": {
+        "respect": 1.0,
+        "budget_overrun": 0.0,
+        "latency_overrun": 0.0,
+        "incomplete": 0.0,
+        "cost_usd": 0.05,
+        "latency_ms": 880.0,
+        "failed_calls": 0,
+        "quality": 0.842
+      }
+    },
+    "moyen": {
+      "fixe:fast-mini": {
+        "respect": 0.0,
+        "budget_overrun": 0.0,
+        "latency_overrun": 0.0,
+        "incomplete": 1.0,
+        "cost_usd": 0.0125,
+        "latency_ms": 498.0,
+        "failed_calls": 3.23,
+        "quality": 0.405
+      },
+      "fixe:balanced-standard": {
+        "respect": 1.0,
+        "budget_overrun": 0.0,
+        "latency_overrun": 0.0,
+        "incomplete": 0.0,
+        "cost_usd": 0.06,
+        "latency_ms": 1000.0,
+        "failed_calls": 0,
+        "quality": 0.862
+      },
+      "fixe:quality-pro": {
+        "respect": 0.0,
+        "budget_overrun": 1.0,
+        "latency_overrun": 1.0,
+        "incomplete": 0.0,
+        "cost_usd": 0.3,
+        "latency_ms": 2500.0,
+        "failed_calls": 0,
+        "quality": 0.946
+      },
+      "ceg:static": {
+        "respect": 1.0,
+        "budget_overrun": 0.0,
+        "latency_overrun": 0.0,
+        "incomplete": 0.0,
+        "cost_usd": 0.05,
+        "latency_ms": 880.0,
+        "failed_calls": 0,
+        "quality": 0.842
+      },
+      "ceg:learned": {
+        "respect": 1.0,
+        "budget_overrun": 0.0,
+        "latency_overrun": 0.0,
+        "incomplete": 0.0,
+        "cost_usd": 0.05,
+        "latency_ms": 880.0,
+        "failed_calls": 0,
+        "quality": 0.842
+      }
+    },
+    "serre": {
+      "fixe:fast-mini": {
+        "respect": 0.0,
+        "budget_overrun": 0.0,
+        "latency_overrun": 0.0,
+        "incomplete": 1.0,
+        "cost_usd": 0.0125,
+        "latency_ms": 498.0,
+        "failed_calls": 3.23,
+        "quality": 0.405
+      },
+      "fixe:balanced-standard": {
+        "respect": 1.0,
+        "budget_overrun": 0.0,
+        "latency_overrun": 0.0,
+        "incomplete": 0.0,
+        "cost_usd": 0.06,
+        "latency_ms": 1000.0,
+        "failed_calls": 0,
+        "quality": 0.862
+      },
+      "fixe:quality-pro": {
+        "respect": 0.0,
+        "budget_overrun": 1.0,
+        "latency_overrun": 1.0,
+        "incomplete": 0.0,
+        "cost_usd": 0.3,
+        "latency_ms": 2500.0,
+        "failed_calls": 0,
+        "quality": 0.946
+      },
+      "ceg:static": {
+        "respect": 1.0,
+        "budget_overrun": 0.0,
+        "latency_overrun": 0.0,
+        "incomplete": 0.0,
+        "cost_usd": 0.05,
+        "latency_ms": 880.0,
+        "failed_calls": 0,
+        "quality": 0.842
+      },
+      "ceg:learned": {
+        "respect": 1.0,
+        "budget_overrun": 0.0,
+        "latency_overrun": 0.0,
+        "incomplete": 0.0,
+        "cost_usd": 0.05,
+        "latency_ms": 880.0,
+        "failed_calls": 0,
+        "quality": 0.842
+      }
+    },
+    "exigeant": {
+      "fixe:fast-mini": {
+        "respect": 0.0,
+        "budget_overrun": 0.0,
+        "latency_overrun": 0.0,
+        "incomplete": 1.0,
+        "cost_usd": 0.0125,
+        "latency_ms": 498.0,
+        "failed_calls": 3.23,
+        "quality": 0.405
+      },
+      "fixe:balanced-standard": {
+        "respect": 0.0,
+        "budget_overrun": 0.0,
+        "latency_overrun": 0.0,
+        "incomplete": 0.0,
+        "cost_usd": 0.06,
+        "latency_ms": 1000.0,
+        "failed_calls": 0,
+        "quality": 0.862
+      },
+      "fixe:quality-pro": {
+        "respect": 1.0,
+        "budget_overrun": 0.0,
+        "latency_overrun": 0.0,
+        "incomplete": 0.0,
+        "cost_usd": 0.3,
+        "latency_ms": 2500.0,
+        "failed_calls": 0,
+        "quality": 0.946
+      },
+      "ceg:static": {
+        "respect": 1.0,
+        "budget_overrun": 0.0,
+        "latency_overrun": 0.0,
+        "incomplete": 0.0,
+        "cost_usd": 0.252,
+        "latency_ms": 2200.0,
+        "failed_calls": 0,
+        "quality": 0.936
+      },
+      "ceg:learned": {
+        "respect": 1.0,
+        "budget_overrun": 0.0,
+        "latency_overrun": 0.0,
+        "incomplete": 0.0,
+        "cost_usd": 0.2598,
+        "latency_ms": 2278.0,
+        "failed_calls": 0,
+        "quality": 0.94
+      }
+    }
+  }
+}

@@ -1,0 +1,141 @@
+{
+  "runs": 40,
+  "seed": 0,
+  "backend": "langgraph",
+  "exploration": 0.1,
+  "results": {
+    "static": {
+      "all_runs": {
+        "cost_usd": 0.02845,
+        "latency_ms": 858.0,
+        "failed_calls": 4.22,
+        "quality": 0.718,
+        "abort_rate": 0.0
+      },
+      "last_10_runs": {
+        "cost_usd": 0.029,
+        "latency_ms": 880.0,
+        "failed_calls": 4.5,
+        "quality": 0.718,
+        "abort_rate": 0.0
+      },
+      "final_models": {
+        "collect": "fast-mini",
+        "aggregate": "fast-mini",
+        "trend": "fast-mini",
+        "detect": "balanced-standard",
+        "report": "fast-mini"
+      },
+      "statistics": null
+    },
+    "learned": {
+      "all_runs": {
+        "cost_usd": 0.02065,
+        "latency_ms": 548.5,
+        "failed_calls": 0.38,
+        "quality": 0.7163,
+        "abort_rate": 0.0
+      },
+      "last_10_runs": {
+        "cost_usd": 0.021,
+        "latency_ms": 560.0,
+        "failed_calls": 0.5,
+        "quality": 0.718,
+        "abort_rate": 0.0
+      },
+      "final_models": {
+        "collect": "fast-mini",
+        "aggregate": "fast-mini",
+        "trend": "fast-mini",
+        "detect": "balanced-standard",
+        "report": "fast-mini"
+      },
+      "statistics": [
+        {
+          "model": "balanced-standard",
+          "capability": "anomaly_detection",
+          "n": 39,
+          "success_rate": 1.0,
+          "mean_quality": 0.877
+        },
+        {
+          "model": "balanced-standard",
+          "capability": "reasoning",
+          "n": 39,
+          "success_rate": 1.0,
+          "mean_quality": 0.877
+        },
+        {
+          "model": "fast-lite",
+          "capability": "anomaly_detection",
+          "n": 3,
+          "success_rate": 0.333,
+          "mean_quality": 0.194
+        },
+        {
+          "model": "fast-lite",
+          "capability": "reasoning",
+          "n": 3,
+          "success_rate": 0.333,
+          "mean_quality": 0.194
+        },
+        {
+          "model": "fast-mini",
+          "capability": "aggregation",
+          "n": 40,
+          "success_rate": 1.0,
+          "mean_quality": 0.66
+        },
+        {
+          "model": "fast-mini",
+          "capability": "anomaly_detection",
+          "n": 4,
+          "success_rate": 0.0,
+          "mean_quality": 0.0
+        },
+        {
+          "model": "fast-mini",
+          "capability": "computation",
+          "n": 89,
+          "success_rate": 0.899,
+          "mean_quality": 0.552
+        },
+        {
+          "model": "fast-mini",
+          "capability": "data_retrieval",
+          "n": 40,
+          "success_rate": 1.0,
+          "mean_quality": 0.8
+        },
+        {
+          "model": "fast-mini",
+          "capability": "reasoning",
+          "n": 4,
+          "success_rate": 0.0,
+          "mean_quality": 0.0
+        },
+        {
+          "model": "fast-mini",
+          "capability": "summarization",
+          "n": 40,
+          "success_rate": 1.0,
+          "mean_quality": 0.675
+        },
+        {
+          "model": "fast-mini",
+          "capability": "text_generation",
+          "n": 40,
+          "success_rate": 1.0,
+          "mean_quality": 0.675
+        },
+        {
+          "model": "fast-mini",
+          "capability": "trend_analysis",
+          "n": 49,
+          "success_rate": 0.816,
+          "mean_quality": 0.463
+        }
+      ]
+    }
+  }
+}

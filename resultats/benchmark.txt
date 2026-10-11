@@ -1,0 +1,36 @@
+
+Scénario « large » : budget 1.0 $, latence 10.0 s, qualité ≥ 0.75
+                               respect   dépass. $  dépass. ms    inachevé      coût $  latence ms     qualité
+--------------------------------------------------------------------------------------------------------------
+fixe:fast-mini                     0.0         0.0         0.0         1.0      0.0125       498.0       0.405
+fixe:balanced-standard             1.0         0.0         0.0         0.0        0.06      1000.0       0.862
+fixe:quality-pro                   1.0         0.0         0.0         0.0         0.3      2500.0       0.946
+ceg:static                         1.0         0.0         0.0         0.0        0.05       880.0       0.842
+ceg:learned                        1.0         0.0         0.0         0.0        0.05       880.0       0.842
+
+Scénario « moyen » : budget 0.15 $, latence 2.0 s, qualité ≥ 0.75
+                               respect   dépass. $  dépass. ms    inachevé      coût $  latence ms     qualité
+--------------------------------------------------------------------------------------------------------------
+fixe:fast-mini                     0.0         0.0         0.0         1.0      0.0125       498.0       0.405
+fixe:balanced-standard             1.0         0.0         0.0         0.0        0.06      1000.0       0.862
+fixe:quality-pro                   0.0         1.0         1.0         0.0         0.3      2500.0       0.946
+ceg:static                         1.0         0.0         0.0         0.0        0.05       880.0       0.842
+ceg:learned                        1.0         0.0         0.0         0.0        0.05       880.0       0.842
+
+Scénario « serre » : budget 0.06 $, latence 1.0 s, qualité ≥ 0.75
+                               respect   dépass. $  dépass. ms    inachevé      coût $  latence ms     qualité
+--------------------------------------------------------------------------------------------------------------
+fixe:fast-mini                     0.0         0.0         0.0         1.0      0.0125       498.0       0.405
+fixe:balanced-standard             1.0         0.0         0.0         0.0        0.06      1000.0       0.862
+fixe:quality-pro                   0.0         1.0         1.0         0.0         0.3      2500.0       0.946
+ceg:static                         1.0         0.0         0.0         0.0        0.05       880.0       0.842
+ceg:learned                        1.0         0.0         0.0         0.0        0.05       880.0       0.842
+
+Scénario « exigeant » : budget 1.0 $, latence 5.0 s, qualité ≥ 0.9
+                               respect   dépass. $  dépass. ms    inachevé      coût $  latence ms     qualité
+--------------------------------------------------------------------------------------------------------------
+fixe:fast-mini                     0.0         0.0         0.0         1.0      0.0125       498.0       0.405
+fixe:balanced-standard             0.0         0.0         0.0         0.0        0.06      1000.0       0.862
+fixe:quality-pro                   1.0         0.0         0.0         0.0         0.3      2500.0       0.946
+ceg:static                         1.0         0.0         0.0         0.0       0.252      2200.0       0.936
+ceg:learned                        1.0         0.0         0.0         0.0      0.2598      2278.0        0.94

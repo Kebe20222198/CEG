@@ -1,0 +1,9 @@
+date      : 2026-10-11T12:30:38Z
+commit    : de59829
+python    : 3.13.16 (x86_64)
+ceg       : 0.6.0
+langgraph : 1.2.14
+crewai    : 1.9.3
+pydantic  : 2.11.10
+fastapi   : 0.141.1
+runs      : 40, graine : 0
