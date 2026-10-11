@@ -328,6 +328,32 @@ class SourceFile(BaseModel):
     code: str
 
 
+class StepEstimateOut(BaseModel):
+    """EXPLAIN of one step: the cheapest model the engine may pick."""
+
+    node_id: str
+    model: str | None
+    cost: float
+    latency_ms: float
+    quality: float | None
+    optional: bool
+    team: bool
+
+
+class PlanEstimateOut(BaseModel):
+    """EXPLAIN of a plan: minimum cost and latency against the declaration."""
+
+    feasible: bool
+    min_cost: float
+    min_latency_ms: float
+    max_cost_usd: float
+    max_latency_ms: float | None
+    min_quality: float
+    errors: list[str]
+    warnings: list[str]
+    steps: list[StepEstimateOut]
+
+
 class WorkflowDetail(WorkflowSummary):
     """A workflow with its code, like Airflow's Code view."""
 
@@ -340,6 +366,10 @@ class WorkflowDetail(WorkflowSummary):
     )
     sources: list[SourceFile] = Field(
         description="Source files of the pipeline template, if any."
+    )
+    estimate: PlanEstimateOut | None = Field(
+        default=None,
+        description="EXPLAIN: minimum cost and latency of the plan (if valid).",
     )
 
 

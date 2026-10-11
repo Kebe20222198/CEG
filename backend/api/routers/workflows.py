@@ -22,7 +22,9 @@ from api.pipelines import REGISTRY, WORKFLOWS_DIR, display_path, pipelines
 from api.schemas import (
     GridRow,
     GridRun,
+    PlanEstimateOut,
     SourceFile,
+    StepEstimateOut,
     WorkflowDetail,
     WorkflowGrid,
     WorkflowImportError,
@@ -35,6 +37,7 @@ from api.services import cognitive_task_of
 from ceg.backends import available_backends
 from ceg.backends.common import hitl_node_ids
 from ceg.codegen import task_to_python
+from ceg.explain import explain
 from ceg.models.graph import CEGGraph
 from ceg.models.task import CognitiveTask, TaskConstraint
 from ceg.planner import PlanningError, plan
@@ -111,6 +114,33 @@ def get_workflow(id: str, db: Session = Depends(get_db)) -> WorkflowDetail:
         declaration=declaration.model_dump(exclude_defaults=True),
         plan=graph.model_dump(exclude={"task"}) if graph else None,
         sources=_sources(task.pipeline),
+        estimate=_estimate(graph) if graph else None,
+    )
+
+
+def _estimate(graph: CEGGraph) -> PlanEstimateOut:
+    estimate = explain(graph)
+    return PlanEstimateOut(
+        feasible=estimate.feasible,
+        min_cost=round(estimate.min_cost, 6),
+        min_latency_ms=round(estimate.min_latency_ms, 3),
+        max_cost_usd=estimate.max_cost_usd,
+        max_latency_ms=estimate.max_latency_ms,
+        min_quality=estimate.min_quality,
+        errors=estimate.errors,
+        warnings=estimate.warnings,
+        steps=[
+            StepEstimateOut(
+                node_id=s.node_id,
+                model=s.model,
+                cost=s.cost,
+                latency_ms=s.latency_ms,
+                quality=s.quality,
+                optional=s.optional,
+                team=s.team,
+            )
+            for s in estimate.steps
+        ],
     )
 
 

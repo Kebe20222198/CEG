@@ -186,6 +186,8 @@ export default function WorkflowPage({ workflowId, tab = 'grid', onRun }) {
         </div>
       )}
 
+      {tab === 'details' && detail.estimate && <EstimateCard estimate={detail.estimate} />}
+
       {tab === 'details' && (
         <div className="stats">
           <div className="stat">
@@ -221,5 +223,65 @@ export default function WorkflowPage({ workflowId, tab = 'grid', onRun }) {
         </div>
       )}
     </>
+  );
+}
+
+// EXPLAIN: the cheapest run the engine can choose, against the declaration.
+function EstimateCard({ estimate: e }) {
+  const verdictColor = e.feasible ? 'var(--status-completed)' : 'var(--status-failed)';
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      <div className="card-header">
+        Estimation avant exécution (EXPLAIN)
+        <span style={{ flex: 1 }} />
+        <span className="small" style={{ color: verdictColor, fontWeight: 600 }}>
+          {e.feasible ? '✓ faisable' : '✗ refusé avant exécution'}
+        </span>
+      </div>
+      <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div className="small">
+          Minimum : <span className="mono">{formatCost(e.min_cost)}</span> pour un budget de{' '}
+          <span className="mono">{formatCost(e.max_cost_usd)}</span>,{' '}
+          <span className="mono">{formatMs(e.min_latency_ms)}</span>
+          {e.max_latency_ms != null && (
+            <> pour une limite de <span className="mono">{formatMs(e.max_latency_ms)}</span></>
+          )}
+          , qualité visée ≥ <span className="mono">{e.min_quality}</span>.
+        </div>
+        {e.errors.map((msg) => (
+          <div key={msg} className="small" style={{ color: 'var(--status-failed)' }}>✗ {msg}</div>
+        ))}
+        {e.warnings.map((msg) => (
+          <div key={msg} className="small" style={{ color: 'var(--status-skipped)' }}>⚠ {msg}</div>
+        ))}
+        <div style={{ overflowX: 'auto' }}>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Étape</th>
+                <th>Modèle le moins cher</th>
+                <th>Coût</th>
+                <th>Latence</th>
+                <th>Qualité estimée</th>
+              </tr>
+            </thead>
+            <tbody>
+              {e.steps.map((step) => (
+                <tr key={step.node_id}>
+                  <td className="mono small">
+                    {step.node_id}
+                    {step.optional && <span className="muted"> (si condition)</span>}
+                  </td>
+                  <td className="mono small">{step.team ? 'équipe' : step.model || '—'}</td>
+                  <td className="mono small">{formatCost(step.cost)}</td>
+                  <td className="mono small">{formatMs(step.latency_ms)}</td>
+                  <td className="mono small">{step.quality == null ? '—' : step.quality.toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   );
 }

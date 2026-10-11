@@ -55,13 +55,15 @@ def prepare_engine(
     """Return the engine for ``graph``, bound by the task's constraints.
 
     The task's ``max_cost_usd`` and ``max_latency_seconds`` cap the engine's
-    budget and latency budget: a caller-supplied engine may be stricter than
-    the declaration, never looser.
+    budget and latency budget, and its ``min_quality_score`` raises the
+    engine's quality floor: a caller-supplied engine may be stricter than the
+    declaration, never looser.
     """
     engine = engine or RuntimeDecisionEngine()
     constraints = graph.task.task_constraints if graph.task else None
     if constraints is not None:
         engine.budget_total = min(engine.budget_total, constraints.max_cost_usd)
+        engine.min_quality = max(engine.min_quality, constraints.min_quality_score)
         limit_ms = constraints.max_latency_seconds * 1000.0
         engine.max_total_latency_ms = (
             limit_ms

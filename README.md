@@ -43,7 +43,7 @@ Le fichier contient la **déclaration** (quoi faire, sous quelles contraintes) e
 
 ```bash
 ceg list                                 # workflows trouvés, fichiers en erreur
-ceg validate tri_tickets_support         # plan, contraintes, backends acceptés — sans exécuter
+ceg validate tri_tickets_support         # plan, EXPLAIN (coût et latence minimaux), backends acceptés — sans exécuter
 ceg show tri_tickets_support             # le workflow sous forme de code
 ceg run tri_tickets_support              # exécution + trace nœud par nœud
 ceg run validation_budget_hitl --approve ask   # les approbations se font dans le terminal
@@ -172,7 +172,7 @@ npm run dev
 
 ```bash
 cd backend
-pytest                      # 454 tests (base SQLite temporaire, jamais ceg.db)
+pytest                      # 472 tests (base SQLite temporaire, jamais ceg.db)
 ruff check . && ruff format --check .
 mypy                        # mode strict sur src/, api/ et tests/
 
@@ -236,9 +236,33 @@ Une déclaration incohérente (dépendance inconnue, `run_if` mal formé, boucle
 | `max_latency_seconds` | Budget de latence cumulée, **jamais dépassé** à l'exécution |
 | `tools_allowed` | **Refus** au plan (et à la compilation d'un graphe écrit à la main) |
 | `required_capabilities` | **Refus** à la compilation si aucun modèle disponible ne les offre |
-| `min_quality_score` | **Vérifiée après coup** par l'Evaluation Engine : une violation fait échouer l'exécution ; non vérifiable si la qualité n'est pas mesurée |
+| `min_quality_score` | **Visée au choix du modèle** : sans indication de tier, seuls les modèles dont la qualité estimée l'atteint sont comparés. **Vérifiée après coup** par l'Evaluation Engine : une violation fait échouer l'exécution ; non vérifiable si la qualité n'est pas mesurée |
+| Budget et latence impossibles | **Refus avant exécution** par l'`EXPLAIN` (`ceg validate`, `ceg run`) |
 
-Un moteur fourni par l'appelant peut être plus strict que la déclaration, jamais plus laxiste.
+Un moteur fourni par l'appelant peut être plus strict que la déclaration, jamais plus laxiste. Une indication de tier est un choix explicite de l'auteur : elle l'emporte sur le plancher de qualité, comme une indication l'emporte sur l'optimiseur en SQL, et l'`EXPLAIN` signale le conflit.
+
+### EXPLAIN : le coût d'un plan avant de l'exécuter
+
+Comme `EXPLAIN` en SQL, `ceg.explain` examine un plan sans l'exécuter. Pour chaque étape, il cherche le modèle le moins cher que le moteur pourrait choisir, avec les mêmes règles que lui (capacités, latence par appel, plancher de qualité, indication de tier), et en déduit le **coût et la latence minimaux** du plan. Une étape derrière une condition peut être sautée et n'est pas comptée ; une boucle compte au moins un tour.
+
+- Si ces minimums dépassent le budget ou la latence déclarés, le plan est **refusé avant toute exécution** : `ceg validate` et `ceg run` s'arrêtent avec un message.
+- La qualité n'étant qu'une estimation, elle ne fait jamais refuser un plan ; mais une étape dont aucun modèle n'atteint le minimum, ou dont l'indication de tier l'en empêche, est **signalée**.
+
+```text
+$ ceg validate analyse_ventes_alertes
+EXPLAIN — modèle le moins cher que le moteur peut choisir :
+ÉTAPE                          MODÈLE             COÛT $  LAT. ms  QUALITÉ
+fetch_data                     fast-mini          0.0020  80       0.75
+aggregate_region               fast-mini          0.0020  80       0.68
+compute_trend                  balanced-standard  0.0120  200      0.82
+detect_anomaly                 quality-pro        0.0600  500      0.93
+generate_alert (si condition)  balanced-standard  0.0120  200      0.87
+
+Minimum : 0.0760 $ (budget 0.5 $), 860 ms (limite 15000 ms)
+⚠ « fetch_data » : l'indication « fast » ne permet pas d'atteindre la qualité 0.85 (au mieux 0.79 ; quality-pro atteindrait 0.95).
+```
+
+Le Studio affiche la même estimation dans l'onglet **Détails** d'un workflow, et l'API dans le champ `estimate` de `GET /workflows/{id}`.
 
 ---
 
@@ -344,6 +368,44 @@ L'expérience exécute 40 fois une tâche d'analyse en 5 étapes, **sans indicat
 > **Hypothèses de simulation.** Les qualités « réelles » (`SIMULATED_TRUTH`) sont inventées pour que l'a priori soit faux. L'expérience montre que l'optimiseur **corrige un a priori erroné** ; elle ne dit rien de la façon dont de vrais modèles se comparent. Avec un vrai LLM, le signal de qualité (`ExecutionResult.confidence`) devra venir d'un juge ou d'une vérité terrain.
 
 Dans l'API, `POST /tasks/{id}/execute` accepte `optimizer: "learned"` ; les statistiques sont partagées par toutes les exécutions « learned », sauvegardées dans `CEG_STATS_PATH`, et consultables via `GET /optimizer/statistics`.
+
+---
+
+## 📏 Benchmark : CEG contre des workflows à modèle fixe
+
+```bash
+cd backend
+python -m ceg.experiments.benchmark --runs 40
+```
+
+La question : qu'apporte CEG par rapport à la façon habituelle d'écrire un workflow LLM, où le développeur choisit **un modèle** pour toutes les étapes, réessaie en cas d'échec et ne gère pas de budget ? La même tâche d'analyse en 5 étapes (sans indication de tier) est exécutée 40 fois dans le simulateur, sous **quatre scénarios** de contraintes, du bon marché à l'exigeant en qualité. Une exécution **respecte** ses contraintes si elle se termine dans le budget, dans la limite de latence et avec une qualité livrée (mesurée par la « vérité » du simulateur) au moins égale au minimum.
+
+Taux d'exécutions qui respectent toutes leurs contraintes (seed 0) :
+
+| Stratégie | large<br>1 $ · 10 s · q ≥ 0,75 | moyen<br>0,15 $ · 2 s · q ≥ 0,75 | serré<br>0,06 $ · 1 s · q ≥ 0,75 | exigeant<br>1 $ · 5 s · q ≥ 0,90 |
+|---|---|---|---|---|
+| Modèle fixe `fast-mini` | 0 % (inachevé) | 0 % | 0 % | 0 % |
+| Modèle fixe `balanced-standard` | 100 % | 100 % | 100 % | 0 % (qualité 0,86) |
+| Modèle fixe `quality-pro` | 100 % | 0 % (dépasse) | 0 % (dépasse) | 100 % |
+| **CEG** (statique ou appris) | **100 %** | **100 %** | **100 %** | **100 %** |
+
+- **Aucun modèle fixe ne convient à tous les scénarios ; CEG les respecte tous avec la même déclaration**, sans que l'auteur connaisse les modèles.
+- CEG ne dépasse **jamais** un budget ou une latence déclarés ; `quality-pro` dépasse de 5× le budget du scénario serré.
+- Là où un modèle fixe réussit aussi, CEG coûte moins : 0,050 $ / 880 ms contre 0,060 $ / 1 000 ms pour `balanced-standard` ; 0,25 $ contre 0,30 $ pour `quality-pro` en scénario exigeant.
+
+Ce benchmark a aussi révélé un défaut, corrigé depuis : le moteur ne regardait pas `min_quality_score` en choisissant les modèles. Avant correction, CEG livrait une qualité de 0,72 et ne respectait la contrainte de qualité (0,75) dans **aucun** scénario. Il ne tient compte du plancher de qualité que depuis cette correction.
+
+> **Mêmes hypothèses de simulation** que l'expérience précédente : les chiffres montrent le comportement de CEG face à des contraintes variées, pas la façon dont de vrais modèles se comparent. Les scénarios ont été choisis pour couvrir l'espace des compromis coût / qualité.
+
+---
+
+## 🔁 Reproduire les résultats
+
+```bash
+./scripts/reproduire.sh      # environ 30 s
+```
+
+Le script lance les vérifications qualité et toute la suite de tests, puis l'expérience de l'optimiseur appris et le benchmark, et écrit tout dans [`resultats/`](resultats/) : tableaux en texte, données en JSON, et versions exactes (Python, CEG, LangGraph, CrewAI, commit). Les expériences sont déterministes (simulateur à graine fixe) : deux exécutions donnent les mêmes fichiers. Les résultats de référence du rapport sont versionnés dans ce dossier.
 
 ---
 
@@ -608,7 +670,7 @@ frontend/
 - **Pauses HITL en mémoire** : le checkpointer de l'API est un `MemorySaver`. Une exécution en attente d'approbation ne survit pas à un redémarrage de l'API ; sa reprise échoue alors avec un message explicite.
 - **Pas d'authentification** sur l'API : à ne pas exposer en dehors d'un poste de développement.
 - **Migrations** : `init_db()` ajoute les colonnes manquantes, mais ne gère ni renommage ni suppression ; Alembic sera nécessaire pour des évolutions plus lourdes du schéma.
-- **Benchmark** : `/benchmark` est encore un stub.
+- **Benchmark** : le benchmark se lance en ligne de commande (`ceg.experiments.benchmark`) ; l'endpoint `/benchmark` de l'API est encore un stub.
 
 ---
 

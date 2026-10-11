@@ -16,6 +16,8 @@ Available backends:
 
 from __future__ import annotations
 
+import importlib.util
+import warnings
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
@@ -101,12 +103,21 @@ def _registry() -> dict[str, Backend]:
     from ceg.backends.python import PythonBackend
 
     backends: list[Backend] = [LangGraphBackend(), PythonBackend()]
-    try:
-        from ceg.backends.crewai import CrewAIBackend
-    except ImportError:  # optional extra: pip install -e ".[crewai]"
-        pass
-    else:
-        backends.append(CrewAIBackend())
+    # Optional extra (pip install -e ".[crewai]"): absent, the backend is
+    # simply not offered; installed but broken, say so instead of hiding it.
+    if importlib.util.find_spec("crewai") is not None:
+        try:
+            from ceg.backends.crewai import CrewAIBackend
+        except ImportError as exc:
+            warnings.warn(
+                f"CrewAI is installed but cannot be imported ({exc}): the "
+                "'crewai' backend is unavailable. Reinstall it, e.g. "
+                'pip install -e ".[crewai]".',
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        else:
+            backends.append(CrewAIBackend())
     return {b.name: b for b in backends}
 
 

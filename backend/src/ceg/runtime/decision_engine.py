@@ -205,10 +205,13 @@ class Constraint(BaseModel):
     Attributes:
         budget_remaining: Maximum allowed cost for the next execution.
         max_latency_ms: Maximum allowed latency in milliseconds.
+        min_quality: Declared quality floor: without a tier hint, only the
+            models expected to reach it are compared (when one does).
     """
 
     budget_remaining: float = Field(..., ge=0.0)
     max_latency_ms: float = Field(..., ge=0.0)
+    min_quality: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 # ── Selection weights ─────────────────────────────────────────────────────────
@@ -323,9 +326,17 @@ def rank_models(
         - ``estimated_latency_ms`` ≤ ``constraints.max_latency_ms``
         - model must support all ``node.required_capabilities``
 
+    Quality floor: on a node without tier hint, when some eligible models are
+    expected to reach ``constraints.min_quality`` (static rating, or learned
+    estimate with ``statistics``), only those are compared. If none does,
+    every eligible model is compared (best effort; the Evaluation Engine
+    reports the violation).
+
     Tier hint: when ``node.model_tier_hint`` is set and at least one eligible
     model belongs to that tier, only models of that tier are compared. If no
     model of the hinted tier is eligible, all eligible models are compared.
+    A hint is the author's explicit choice: it takes precedence over the
+    quality floor (``ceg.explain`` reports the conflict before running).
 
     Learned statistics: with ``statistics``, the quality term is the learned
     estimate (plus an exploration bonus) and the cost and latency terms use the
@@ -349,6 +360,20 @@ def rank_models(
     ]
 
     hint = node.model_tier_hint
+    if hint is None and constraints.min_quality > 0:
+        caps = node.required_capabilities
+        good_enough = [
+            m
+            for m in eligible
+            if (
+                statistics.quality_estimate(m, caps)
+                if statistics is not None
+                else m.quality_rating_for(caps)
+            )
+            >= constraints.min_quality
+        ]
+        if good_enough:
+            eligible = good_enough
     if hint is not None:
         in_tier = [m for m in eligible if m.tier == hint]
         if in_tier:
@@ -456,6 +481,8 @@ class RuntimeDecisionEngine:
             uses them (learned optimiser) and every call — failed or not —
             is recorded into them, so the engine keeps learning. They can be
             shared by several engines and saved between sessions.
+        min_quality: Quality floor for model selection (see ``rank_models``).
+            Set from ``TaskConstraint.min_quality_score``.
     """
 
     def __init__(
@@ -467,8 +494,10 @@ class RuntimeDecisionEngine:
         fallback_config: FallbackConfig | None = None,
         max_total_latency_ms: float | None = None,
         statistics: ModelStatistics | None = None,
+        min_quality: float = 0.0,
     ) -> None:
         self.budget_total = budget_total
+        self.min_quality = min_quality
         self.budget_used: float = 0.0
         # Estimated cost and latency of the calls in flight. Parallel branches
         # see each other's reservations, so together they cannot overspend.
@@ -528,7 +557,9 @@ class RuntimeDecisionEngine:
         if remaining is not None:
             max_latency_ms = min(max_latency_ms, remaining)
         return Constraint(
-            budget_remaining=self.budget_remaining, max_latency_ms=max_latency_ms
+            budget_remaining=self.budget_remaining,
+            max_latency_ms=max_latency_ms,
+            min_quality=self.min_quality,
         )
 
     def constraint_for(self, state: dict[str, Any]) -> Constraint:

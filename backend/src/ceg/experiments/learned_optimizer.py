@@ -15,13 +15,17 @@ run, from the simulator's ground truth (which the optimiser never sees):
   - **quality** actually delivered: true quality of the model that produced
     each node's result.
 
-Run:  ``python -m ceg.experiments.learned_optimizer [--runs 40] [--seed 0]``
+Run:  ``python -m ceg.experiments.learned_optimizer [--runs 40] [--seed 0]
+[--json out.json]``
 """
 
 from __future__ import annotations
 
 import argparse
+import json
+import logging
 from dataclasses import dataclass
+from pathlib import Path
 from statistics import mean
 from typing import Any
 
@@ -186,7 +190,10 @@ def main() -> None:
     parser.add_argument("--window", type=int, default=10)
     parser.add_argument("--backend", default="langgraph")
     parser.add_argument("--exploration", type=float, default=0.1)
+    parser.add_argument("--json", type=Path, help="write the results to this file")
     args = parser.parse_args()
+    # Retries and escalations are expected here: keep the output to the table.
+    logging.getLogger("ceg").setLevel(logging.ERROR)
     results = compare(
         runs=args.runs,
         seed=args.seed,
@@ -195,6 +202,15 @@ def main() -> None:
         exploration=args.exploration,
     )
     _print_table(results, args.window)
+    if args.json:
+        report = {
+            "runs": args.runs,
+            "seed": args.seed,
+            "backend": args.backend,
+            "exploration": args.exploration,
+            "results": results,
+        }
+        args.json.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
 
 
 if __name__ == "__main__":

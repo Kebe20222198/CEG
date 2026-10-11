@@ -24,6 +24,7 @@ from ceg.backends import DEFAULT_BACKEND, available_backends, get_backend
 from ceg.backends.common import hitl_node_ids
 from ceg.codegen import task_to_python
 from ceg.evaluation.engine import EvaluationEngine
+from ceg.explain import PlanEstimate, explain
 from ceg.models.graph import CEGGraph, EdgeType
 from ceg.planner import PlanningError, plan
 from ceg.registry import WorkflowDefinition, WorkflowRegistry
@@ -85,6 +86,11 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     if declaration.tools_allowed:
         print(f"Outils autorisés : {', '.join(declaration.tools_allowed)}")
 
+    estimate = explain(graph)
+    _print_estimate(estimate)
+    if not estimate.feasible:
+        return 1
+
     print("\nBackends :")
     accepted = 0
     for backend in available_backends():
@@ -123,6 +129,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
         return 1
 
     statistics = _load_statistics(args.stats) if args.optimizer == "learned" else None
+    estimate = explain(graph, RuntimeDecisionEngine(statistics=statistics))
+    if not estimate.feasible:
+        print("✗ Plan refusé avant exécution :")
+        for error in estimate.errors:
+            print(f"  {error}")
+        return 1
     engine = RuntimeDecisionEngine(statistics=statistics)
     try:
         workflow = _compile(args.backend, graph, definition, engine=engine)
@@ -301,6 +313,44 @@ def _describe_plan(graph: CEGGraph) -> None:
     approvals = hitl_node_ids(graph)
     if approvals:
         print(f"Approbation humaine : {', '.join(approvals)}")
+
+
+def _print_estimate(estimate: PlanEstimate) -> None:
+    print("\nEXPLAIN — modèle le moins cher que le moteur peut choisir :")
+    rows = []
+    for step in estimate.steps:
+        name = step.node_id + (" (si condition)" if step.optional else "")
+        if step.team:
+            rows.append(
+                [name, "équipe", f"{step.cost:.4f}", f"{step.latency_ms:.0f}", ""]
+            )
+        else:
+            quality = "" if step.quality is None else f"{step.quality:.2f}"
+            rows.append(
+                [
+                    name,
+                    step.model or "—",
+                    f"{step.cost:.4f}",
+                    f"{step.latency_ms:.0f}",
+                    quality,
+                ]
+            )
+    _table(["ÉTAPE", "MODÈLE", "COÛT $", "LAT. ms", "QUALITÉ"], rows)
+    limit = (
+        f"{estimate.max_latency_ms:.0f} ms"
+        if estimate.max_latency_ms is not None
+        else "sans limite"
+    )
+    print(
+        f"\nMinimum : {estimate.min_cost:.4f} $ (budget {estimate.max_cost_usd} $), "
+        f"{estimate.min_latency_ms:.0f} ms (limite {limit})"
+    )
+    for warning in estimate.warnings:
+        print(f"⚠ {warning}")
+    for error in estimate.errors:
+        print(f"✗ {error}")
+    if estimate.feasible:
+        print("✓ Plan faisable dans les limites déclarées.")
 
 
 def _parse_inputs(pairs: list[str]) -> dict[str, Any]:

@@ -9,6 +9,7 @@ every node must be identical.
 
 from __future__ import annotations
 
+import importlib.util
 from collections import Counter
 from collections.abc import Callable
 from datetime import datetime
@@ -97,7 +98,11 @@ class TestRegistry:
         assert DEFAULT_BACKEND == "langgraph"
 
     def test_crewai_is_registered_when_installed(self) -> None:
-        pytest.importorskip("crewai")
+        # find_spec, not importorskip: a CrewAI that is installed but broken
+        # must fail here rather than silently skip every CrewAI test.
+        if importlib.util.find_spec("crewai") is None:
+            pytest.skip("crewai is not installed")
+        assert "crewai" in {b.name for b in available_backends()}
         assert not get_backend("crewai").supports_hitl
 
     def test_unknown_backend(self) -> None:
