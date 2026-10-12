@@ -4,7 +4,12 @@
     ceg validate <workflow>       plan and check a workflow, without running it
     ceg show <workflow>           the workflow as Python code
     ceg run <workflow>            run it here and print the trace
+    ceg run <workflow> --llm all  run it on real models (Gemini, Groq, Ollama)
+    ceg llm check                 check API keys, providers and served models
     ceg studio                    start the API and the Studio
+
+API keys are read from the environment or from a ``.env`` file in the current
+directory or its parent (Git ignores it).
 
 Workflows are read from ``--workflows`` (default: ``$CEG_WORKFLOWS_DIR``, or
 ``./workflows``), plus the examples shipped with CEG.
@@ -35,6 +40,10 @@ from ceg.runtime.statistics import ModelStatistics
 
 def main(argv: list[str] | None = None) -> int:
     """Entry point of the ``ceg`` command; returns the exit code."""
+    from ceg.llm.providers import load_dotenv
+
+    for folder in (Path.cwd(), Path.cwd().parent):
+        load_dotenv(folder / ".env")
     parser = _parser()
     args = parser.parse_args(argv)
     if not hasattr(args, "handler"):
@@ -129,20 +138,50 @@ def _cmd_run(args: argparse.Namespace) -> int:
         return 1
 
     statistics = _load_statistics(args.stats) if args.optimizer == "learned" else None
-    estimate = explain(graph, RuntimeDecisionEngine(statistics=statistics))
+    llm_models = _llm_models(args)
+    if llm_models == []:
+        print("✗ Aucun modèle réel disponible : lancez « ceg llm check ».")
+        return 1
+
+    def new_engine() -> RuntimeDecisionEngine:
+        if llm_models is None:
+            return RuntimeDecisionEngine(statistics=statistics)
+        # Real calls take seconds: the per-call limit is the task's latency.
+        return RuntimeDecisionEngine(
+            statistics=statistics,
+            available_models=llm_models,
+            max_latency_ms=120_000.0,
+        )
+
+    estimate = explain(graph, new_engine())
     if not estimate.feasible:
         print("✗ Plan refusé avant exécution :")
         for error in estimate.errors:
             print(f"  {error}")
         return 1
-    engine = RuntimeDecisionEngine(statistics=statistics)
+    engine = new_engine()
+    executor = None
+    if llm_models is not None:
+        from ceg.llm.executor import LLMExecutor
+
+        executor = LLMExecutor(graph)
     try:
-        workflow = _compile(args.backend, graph, definition, engine=engine)
+        workflow = _compile(
+            args.backend, graph, definition, engine=engine, executor=executor
+        )
     except ValueError as exc:
         print(f"✗ {exc}")
         return 1
 
-    print(f"▶ {definition.id} — backend {args.backend}, optimiseur {args.optimizer}\n")
+    models = (
+        f"modèles réels : {', '.join(m.name for m in llm_models)}"
+        if llm_models is not None
+        else "modèles simulés"
+    )
+    print(
+        f"▶ {definition.id} — backend {args.backend}, optimiseur {args.optimizer}, "
+        f"{models}\n"
+    )
     aborted: NodeAbortError | None = None
     state: dict[str, Any] = {}
     try:
@@ -256,6 +295,22 @@ def _parser() -> argparse.ArgumentParser:
         help="réponse aux demandes d'approbation humaine",
     )
 
+    run.add_argument(
+        "--llm",
+        metavar="FOURNISSEURS",
+        help="exécuter sur de vrais modèles : all, ou gemini,groq,ollama",
+    )
+    run.add_argument("--models", help="fichier JSON des modèles réels (optionnel)")
+
+    llm = sub.add_parser("llm", help="modèles réels (Gemini, Groq, Ollama)")
+    llm_sub = llm.add_subparsers(title="commandes")
+    check = llm_sub.add_parser(
+        "check", help="vérifier les clés, les fournisseurs et les modèles servis"
+    )
+    check.add_argument("--models", help="fichier JSON des modèles réels (optionnel)")
+    check.add_argument("--verbose", "-v", action="store_true")
+    check.set_defaults(handler=_cmd_llm_check)
+
     studio = command("studio", "lancer l'API et le Studio", _cmd_studio)
     studio.add_argument("--port", type=int, default=8000)
     studio.add_argument("--no-frontend", action="store_true")
@@ -282,6 +337,7 @@ def _compile(
     graph: CEGGraph,
     definition: WorkflowDefinition,
     engine: RuntimeDecisionEngine | None = None,
+    executor: Any = None,
 ) -> Any:
     from langgraph.checkpoint.memory import MemorySaver
 
@@ -289,9 +345,43 @@ def _compile(
     return backend.compile(
         graph,
         engine=engine,
-        executor=definition.make_executor(),
+        executor=executor if executor is not None else definition.make_executor(),
         checkpointer=MemorySaver() if backend.supports_hitl else None,
     )
+
+
+def _llm_models(args: argparse.Namespace) -> list[Any] | None:
+    """Real models for ``--llm`` (None: simulated models)."""
+    if not getattr(args, "llm", None):
+        return None
+    from ceg.llm.providers import available_models, load_models
+
+    only = None if args.llm == "all" else [p.strip() for p in args.llm.split(",")]
+    models = load_models(args.models) if getattr(args, "models", None) else None
+    return available_models(models, only)
+
+
+def _cmd_llm_check(args: argparse.Namespace) -> int:
+    from ceg.llm.providers import REAL_MODELS, check_provider, load_models, providers
+
+    models = load_models(args.models) if args.models else REAL_MODELS
+    ok_any = False
+    for provider in providers().values():
+        reachable, served, message = check_provider(provider)
+        mark = "✓" if reachable else "✗"
+        print(f"{mark} {provider.name:<7} {provider.base_url}  —  {message}")
+        ok_any = ok_any or reachable
+        for model in (m for m in models if m.provider == provider.name):
+            if not reachable:
+                state = "—"
+            elif model.provider_model in served:
+                state = "✓ servi"
+            else:
+                state = "✗ non servi (mettre à jour l'identifiant)"
+            print(f"    {model.tier.value:<8} {model.provider_model:<28} {state}")
+        if reachable and args.verbose:
+            print("    modèles servis : " + ", ".join(served))
+    return 0 if ok_any else 1
 
 
 def _describe_plan(graph: CEGGraph) -> None:

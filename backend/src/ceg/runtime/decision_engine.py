@@ -166,7 +166,7 @@ _CAPABILITY_RATINGS: dict[str, dict[str, float]] = {
 
 
 class ModelProfile(BaseModel):
-    """Description of a (mock) LLM model available in the registry.
+    """Description of an LLM model available in the registry.
 
     Attributes:
         name: Unique model identifier (e.g. "fast-mini").
@@ -174,6 +174,13 @@ class ModelProfile(BaseModel):
         estimated_cost: Estimated monetary cost per execution.
         estimated_latency_ms: Estimated latency in milliseconds.
         supported_capabilities: List of task capabilities this model can handle.
+        provider: For a real model, the provider serving it (``ceg.llm``);
+            None for the simulated registry.
+        provider_model: The provider's own identifier of the model.
+        input_price_per_mtok: USD per million input tokens (real models).
+        output_price_per_mtok: USD per million output tokens (real models).
+        prior_quality: Prior quality on any capability, for a model absent
+            from the static ratings (real models); learned statistics refine it.
     """
 
     name: str = Field(..., min_length=1)
@@ -181,6 +188,11 @@ class ModelProfile(BaseModel):
     estimated_cost: float = Field(..., ge=0.0)
     estimated_latency_ms: float = Field(..., ge=0.0)
     supported_capabilities: list[str] = Field(default_factory=list)
+    provider: str | None = None
+    provider_model: str | None = None
+    input_price_per_mtok: float = Field(default=0.0, ge=0.0)
+    output_price_per_mtok: float = Field(default=0.0, ge=0.0)
+    prior_quality: float | None = Field(default=None, ge=0.0, le=1.0)
 
     def supports(self, capabilities: list[str]) -> bool:
         """Return True if this model supports ALL required capabilities."""
@@ -195,8 +207,16 @@ class ModelProfile(BaseModel):
         if not capabilities:
             return 1.0
         ratings = _CAPABILITY_RATINGS.get(self.name, {})
-        scores = [ratings.get(cap, 0.5) for cap in capabilities]
+        default = self.prior_quality if self.prior_quality is not None else 0.5
+        scores = [ratings.get(cap, default) for cap in capabilities]
         return sum(scores) / len(scores)
+
+    def cost_of(self, input_tokens: int, output_tokens: int) -> float:
+        """Price of a call from its token counts (real models)."""
+        return (
+            input_tokens * self.input_price_per_mtok
+            + output_tokens * self.output_price_per_mtok
+        ) / 1_000_000
 
 
 class Constraint(BaseModel):

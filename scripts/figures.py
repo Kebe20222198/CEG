@@ -306,6 +306,40 @@ def optimizer_table(report: dict) -> Path:
     return path
 
 
+PROVIDER_LABELS = {"gemini": "Gemini", "groq": "Groq", "ollama": "Ollama (local)"}
+
+
+def portability_table(report: dict) -> Path:
+    """Real models: the same task on each provider (resultats/portabilite.json)."""
+    lines = [
+        "% Généré par scripts/figures.py depuis resultats/portabilite.json",
+        "\\begin{tabular}{lrrrrr}",
+        "\\toprule",
+        "\\textbf{Fournisseur} & \\textbf{Terminées} & \\textbf{Coût / exéc.} "
+        "& \\textbf{Latence} & \\textbf{Urgence détectée} & \\textbf{Qualité} \\\\",
+        "\\midrule",
+    ]
+    for name, result in report["providers"].items():
+        label = PROVIDER_LABELS.get(name, name)
+        if not result.get("available"):
+            lines.append(f"{label} & \\multicolumn{{5}}{{l}}{{non configuré}} \\\\")
+            continue
+        s = result["summary"]
+        cost = "---" if s["cost_usd"] is None else f"{fr(s['cost_usd'], 5)}\\,\\$"
+        latency = (
+            "---" if s["latency_ms"] is None else f"{fr(s['latency_ms'] / 1000, 1)}\\,s"
+        )
+        quality = "---" if s["quality"] is None else fr(s["quality"], 2)
+        lines.append(
+            f"{label} & {round(s['completion'] * 100)}\\,\\% & {cost} & {latency} & "
+            f"{round(s['urgent_detected'] * 100)}\\,\\% & {quality} \\\\"
+        )
+    lines += ["\\bottomrule", "\\end{tabular}", ""]
+    path = TABLES / "portabilite.tex"
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
 def main() -> int:
     missing = [
         name
@@ -330,6 +364,11 @@ def main() -> int:
         optimizer_table(optimizer),
     ):
         print(f"✓ {path.relative_to(ROOT)}")
+    # Real models: only when the experiment has been run (needs API keys).
+    portability = RESULTS / "portabilite.json"
+    if portability.exists():
+        report = json.loads(portability.read_text(encoding="utf-8"))
+        print(f"✓ {portability_table(report).relative_to(ROOT)}")
     return 0
 
 

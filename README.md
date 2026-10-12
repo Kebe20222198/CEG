@@ -172,7 +172,7 @@ npm run dev
 
 ```bash
 cd backend
-pytest                      # 472 tests (base SQLite temporaire, jamais ceg.db)
+pytest                      # 494 tests (base SQLite temporaire, jamais ceg.db ; aucun appel réseau)
 ruff check . && ruff format --check .
 mypy                        # mode strict sur src/, api/ et tests/
 
@@ -396,6 +396,35 @@ Taux d'exécutions qui respectent toutes leurs contraintes (seed 0) :
 Ce benchmark a aussi révélé un défaut, corrigé depuis : le moteur ne regardait pas `min_quality_score` en choisissant les modèles. Avant correction, CEG livrait une qualité de 0,72 et ne respectait la contrainte de qualité (0,75) dans **aucun** scénario. Il ne tient compte du plancher de qualité que depuis cette correction.
 
 > **Mêmes hypothèses de simulation** que l'expérience précédente : les chiffres montrent le comportement de CEG face à des contraintes variées, pas la façon dont de vrais modèles se comparent. Les scénarios ont été choisis pour couvrir l'espace des compromis coût / qualité.
+
+---
+
+## 🤖 Modèles réels : Gemini, Groq, Ollama
+
+Par défaut, les étapes sont exécutées par des modèles simulés. CEG peut aussi les confier à de vrais modèles, chez trois fournisseurs qui exposent tous une API compatible OpenAI (un seul client, sans dépendance) :
+
+| Fournisseur | Accès | Modèles par défaut (gamme) |
+|---|---|---|
+| Gemini | clé `GEMINI_API_KEY` ([AI Studio](https://aistudio.google.com/apikey)) | `gemini-2.5-flash-lite` (fast), `gemini-2.5-flash` (quality) |
+| Groq | clé `GROQ_API_KEY` ([console](https://console.groq.com/keys)) | `llama-3.1-8b-instant` (fast), `llama-3.3-70b-versatile` (balanced) |
+| Ollama | local, dans Docker, sans clé | `qwen2.5:3b` (fast) |
+
+```bash
+cp .env.example .env                       # puis y mettre les clés (.env est ignoré par Git)
+docker compose up -d ollama                # Ollama dans Docker
+docker compose exec ollama ollama pull qwen2.5:3b
+ceg llm check                              # clés, fournisseurs joignables, modèles servis
+ceg run tri_tickets_support --llm all      # ou --llm groq, --llm gemini,ollama
+```
+
+Le moteur choisit parmi les modèles réels disponibles, avec les mêmes règles (budget, latence, qualité, gamme). Le coût de chaque appel est calculé à partir des jetons consommés et des prix publics des modèles. Les clés ne sont lues que dans l'environnement : jamais écrites dans le code ni dans les traces. Les identifiants et les prix des modèles changent : `ceg llm check` signale un identifiant qui n'est plus servi, et `--models fichier.json` les remplace sans toucher au code.
+
+L'expérience de portabilité (objectif OS2 du cahier des charges) exécute le même workflow, sans modification, sur chaque fournisseur, et mesure complétion, coût, latence, détection de l'urgence et qualité notée par un même juge LLM :
+
+```bash
+cd backend
+python -m ceg.experiments.portabilite --runs 3 --json ../resultats/portabilite.json
+```
 
 ---
 
