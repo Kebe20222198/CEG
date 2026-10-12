@@ -122,6 +122,9 @@ def run_once(
         "wall_s": round(wall_s, 2),
         "calls": len(executor.calls),
         "failed_calls": sum(not c["ok"] for c in executor.calls),
+        "errors": sorted(
+            {str(c["error"])[:120] for c in executor.calls if not c["ok"]}
+        ),
         "escalated": statuses.get("escalader") == "completed",
         "urgent_flagged": urgent_flagged,
         "quality": quality,

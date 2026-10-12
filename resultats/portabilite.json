@@ -1,0 +1,236 @@
+{
+  "workflow": "tri_tickets_support",
+  "latency_limit_s": 300.0,
+  "runs_per_provider": 5,
+  "judge": "groq:openai/gpt-oss-120b",
+  "quality_gap": 0.055,
+  "h2_met": true,
+  "providers": {
+    "gemini": {
+      "available": true,
+      "models": [
+        "gemini:gemini-2.5-flash-lite",
+        "gemini:gemini-2.5-flash"
+      ],
+      "summary": {
+        "runs": 5,
+        "completion": 1.0,
+        "cost_usd": 0.001038,
+        "latency_ms": 34709.3,
+        "failed_calls": 4.8,
+        "urgent_detected": 1.0,
+        "quality": 0.843
+      },
+      "runs": [
+        {
+          "completed": true,
+          "error": null,
+          "cost_usd": 0.0006,
+          "latency_ms": 5876.8,
+          "wall_s": 4.16,
+          "calls": 5,
+          "failed_calls": 0,
+          "escalated": true,
+          "urgent_flagged": true,
+          "quality": 0.93,
+          "models": {
+            "lire_tickets": "gemini:gemini-2.5-flash-lite",
+            "classer": "gemini:gemini-2.5-flash-lite",
+            "detecter_urgences": "gemini:gemini-2.5-flash",
+            "escalader": "gemini:gemini-2.5-flash-lite",
+            "rediger_synthese": "gemini:gemini-2.5-flash-lite"
+          }
+        },
+        {
+          "completed": true,
+          "error": null,
+          "cost_usd": 0.0006,
+          "latency_ms": 9033.5,
+          "wall_s": 5.64,
+          "calls": 5,
+          "failed_calls": 0,
+          "escalated": true,
+          "urgent_flagged": true,
+          "quality": 0.83,
+          "models": {
+            "lire_tickets": "gemini:gemini-2.5-flash-lite",
+            "classer": "gemini:gemini-2.5-flash-lite",
+            "detecter_urgences": "gemini:gemini-2.5-flash",
+            "escalader": "gemini:gemini-2.5-flash-lite",
+            "rediger_synthese": "gemini:gemini-2.5-flash-lite"
+          }
+        },
+        {
+          "completed": true,
+          "error": null,
+          "cost_usd": 0.0006,
+          "latency_ms": 116865.9,
+          "wall_s": 61.27,
+          "calls": 5,
+          "failed_calls": 0,
+          "escalated": true,
+          "urgent_flagged": true,
+          "quality": 0.906,
+          "models": {
+            "lire_tickets": "gemini:gemini-2.5-flash-lite",
+            "classer": "gemini:gemini-2.5-flash-lite",
+            "detecter_urgences": "gemini:gemini-2.5-flash",
+            "escalader": "gemini:gemini-2.5-flash-lite",
+            "rediger_synthese": "gemini:gemini-2.5-flash-lite"
+          }
+        },
+        {
+          "completed": true,
+          "error": null,
+          "cost_usd": 0.001323,
+          "latency_ms": 26301.8,
+          "wall_s": 279.0,
+          "calls": 13,
+          "failed_calls": 8,
+          "escalated": true,
+          "urgent_flagged": true,
+          "quality": 0.71,
+          "models": {
+            "lire_tickets": "gemini:gemini-2.5-flash-lite",
+            "classer": "gemini:gemini-2.5-flash-lite",
+            "detecter_urgences": "gemini:gemini-2.5-flash",
+            "escalader": "gemini:gemini-2.5-flash",
+            "rediger_synthese": "gemini:gemini-2.5-flash"
+          }
+        },
+        {
+          "completed": true,
+          "error": null,
+          "cost_usd": 0.002065,
+          "latency_ms": 15468.3,
+          "wall_s": 773.71,
+          "calls": 21,
+          "failed_calls": 16,
+          "escalated": true,
+          "urgent_flagged": true,
+          "quality": 0.84,
+          "models": {
+            "lire_tickets": "gemini:gemini-2.5-flash",
+            "classer": "gemini:gemini-2.5-flash",
+            "detecter_urgences": "gemini:gemini-2.5-flash",
+            "escalader": "gemini:gemini-2.5-flash",
+            "rediger_synthese": "gemini:gemini-2.5-flash"
+          }
+        }
+      ]
+    },
+    "groq": {
+      "available": true,
+      "models": [
+        "groq:openai/gpt-oss-20b",
+        "groq:openai/gpt-oss-120b"
+      ],
+      "summary": {
+        "runs": 5,
+        "completion": 1.0,
+        "cost_usd": 0.001488,
+        "latency_ms": 8582.8,
+        "failed_calls": 0.6,
+        "urgent_detected": 1.0,
+        "quality": 0.797
+      },
+      "runs": [
+        {
+          "completed": true,
+          "error": null,
+          "cost_usd": 0.001415,
+          "latency_ms": 11472.7,
+          "wall_s": 9.33,
+          "calls": 5,
+          "failed_calls": 0,
+          "escalated": true,
+          "urgent_flagged": true,
+          "quality": 0.71,
+          "models": {
+            "lire_tickets": "groq:openai/gpt-oss-20b",
+            "classer": "groq:openai/gpt-oss-120b",
+            "detecter_urgences": "groq:openai/gpt-oss-20b",
+            "escalader": "groq:openai/gpt-oss-20b",
+            "rediger_synthese": "groq:openai/gpt-oss-120b"
+          }
+        },
+        {
+          "completed": true,
+          "error": null,
+          "cost_usd": 0.001312,
+          "latency_ms": 4703.7,
+          "wall_s": 8.73,
+          "calls": 6,
+          "failed_calls": 1,
+          "escalated": true,
+          "urgent_flagged": true,
+          "quality": 0.815,
+          "models": {
+            "lire_tickets": "groq:openai/gpt-oss-20b",
+            "classer": "groq:openai/gpt-oss-120b",
+            "detecter_urgences": "groq:openai/gpt-oss-20b",
+            "escalader": "groq:openai/gpt-oss-20b",
+            "rediger_synthese": "groq:openai/gpt-oss-120b"
+          }
+        },
+        {
+          "completed": true,
+          "error": null,
+          "cost_usd": 0.001652,
+          "latency_ms": 6406.3,
+          "wall_s": 4.27,
+          "calls": 5,
+          "failed_calls": 0,
+          "escalated": true,
+          "urgent_flagged": true,
+          "quality": 0.8,
+          "models": {
+            "lire_tickets": "groq:openai/gpt-oss-20b",
+            "classer": "groq:openai/gpt-oss-120b",
+            "detecter_urgences": "groq:openai/gpt-oss-20b",
+            "escalader": "groq:openai/gpt-oss-20b",
+            "rediger_synthese": "groq:openai/gpt-oss-120b"
+          }
+        },
+        {
+          "completed": true,
+          "error": null,
+          "cost_usd": 0.001626,
+          "latency_ms": 14815.4,
+          "wall_s": 18.96,
+          "calls": 6,
+          "failed_calls": 1,
+          "escalated": true,
+          "urgent_flagged": true,
+          "quality": 0.89,
+          "models": {
+            "lire_tickets": "groq:openai/gpt-oss-20b",
+            "classer": "groq:openai/gpt-oss-120b",
+            "detecter_urgences": "groq:openai/gpt-oss-20b",
+            "escalader": "groq:openai/gpt-oss-20b",
+            "rediger_synthese": "groq:openai/gpt-oss-120b"
+          }
+        },
+        {
+          "completed": true,
+          "error": null,
+          "cost_usd": 0.001436,
+          "latency_ms": 5515.9,
+          "wall_s": 9.73,
+          "calls": 6,
+          "failed_calls": 1,
+          "escalated": true,
+          "urgent_flagged": true,
+          "quality": 0.77,
+          "models": {
+            "lire_tickets": "groq:openai/gpt-oss-20b",
+            "classer": "groq:openai/gpt-oss-120b",
+            "detecter_urgences": "groq:openai/gpt-oss-20b",
+            "escalader": "groq:openai/gpt-oss-20b",
+            "rediger_synthese": "groq:openai/gpt-oss-120b"
+          }
+        }
+      ]
+    }
+  }
+}
