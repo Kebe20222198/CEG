@@ -120,12 +120,14 @@ class LLMExecutor:
             data,
             "",
         ]
+        lines.append(
+            "Réponds par un objet JSON qui contient le résultat complet de l'étape."
+        )
         for key in self.required_keys.get(node_id, []):
             lines.append(
-                f"L'objet JSON doit contenir la clé booléenne « {key} » "
-                "(true ou false)."
+                f"En plus de ce résultat, l'objet doit contenir la clé booléenne "
+                f"« {key} » (true ou false)."
             )
-        lines.append("Réponds par un objet JSON qui contient le résultat de l'étape.")
         return "\n".join(lines)
 
     def _client(self, provider: str) -> ChatClient:

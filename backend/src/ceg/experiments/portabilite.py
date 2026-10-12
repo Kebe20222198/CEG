@@ -65,7 +65,7 @@ CRITERIA = [
 ]
 
 # Judge preference: a large model, the same for every provider.
-JUDGES = ["groq:llama-3.3-70b-versatile", "gemini:gemini-2.5-flash"]
+JUDGES = ["groq:openai/gpt-oss-120b", "gemini:gemini-2.5-flash"]
 
 
 def task() -> tuple[CognitiveTask, dict[str, Any]]:
@@ -106,10 +106,12 @@ def run_once(
 
     outputs: dict[str, Any] = state.get("node_outputs", {}) if state else {}
     statuses: dict[str, str] = state.get("node_statuses", {}) if state else {}
+    detection = outputs.get("detecter_urgences")
     urgent_flagged = bool(
-        isinstance(outputs.get("detecter_urgences"), dict)
-        and outputs["detecter_urgences"].get("a_des_urgences")
-        and URGENT_TICKET in json.dumps(outputs["detecter_urgences"])
+        isinstance(detection, dict)
+        and detection.get("a_des_urgences") is True
+        and URGENT_TICKET
+        in json.dumps([detection, outputs.get("escalader")], ensure_ascii=False)
     )
     quality = _judge(graph, outputs, statuses, judge) if completed and judge else None
     return {

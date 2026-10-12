@@ -406,7 +406,7 @@ Par défaut, les étapes sont exécutées par des modèles simulés. CEG peut au
 | Fournisseur | Accès | Modèles par défaut (gamme) |
 |---|---|---|
 | Gemini | clé `GEMINI_API_KEY` ([AI Studio](https://aistudio.google.com/apikey)) | `gemini-2.5-flash-lite` (fast), `gemini-2.5-flash` (quality) |
-| Groq | clé `GROQ_API_KEY` ([console](https://console.groq.com/keys)) | `llama-3.1-8b-instant` (fast), `llama-3.3-70b-versatile` (balanced) |
+| Groq | clé `GROQ_API_KEY` ([console](https://console.groq.com/keys)) | `openai/gpt-oss-20b` (fast), `openai/gpt-oss-120b` (balanced) |
 | Ollama | local, dans Docker, sans clé | `qwen2.5:3b` (fast) |
 
 ```bash

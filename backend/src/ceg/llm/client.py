@@ -11,13 +11,17 @@ sent in the ``Authorization`` header: never logged, never stored in traces.
 
 from __future__ import annotations
 
+import http.client
 import json
+import socket
+import ssl
 import time
-import urllib.error
-import urllib.request
+import urllib.parse
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
+
+USER_AGENT = "ceg/0.6 (+https://github.com/Kebe20222198/CEG)"
 
 # (method, url, headers, body or None, timeout) -> (status, parsed JSON body)
 Transport = Callable[
@@ -44,6 +48,44 @@ class ChatResponse:
     latency_ms: float
 
 
+# Seconds to open a TCP connection to one address before trying the next one.
+# Some networks silently drop a provider's addresses: without this, a call
+# would wait for the whole timeout on a dead address.
+CONNECT_TIMEOUT = 3.0
+
+
+def _connect(host: str, port: int) -> socket.socket:
+    """A TCP connection to the first address of ``host`` that answers."""
+    last_error: OSError | None = None
+    for family, kind, proto, _, address in socket.getaddrinfo(
+        host, port, type=socket.SOCK_STREAM
+    ):
+        sock = socket.socket(family, kind, proto)
+        sock.settimeout(CONNECT_TIMEOUT)
+        try:
+            sock.connect(address)
+        except OSError as exc:
+            sock.close()
+            last_error = exc
+            continue
+        return sock
+    raise last_error or OSError(f"no address for {host}")
+
+
+class _HTTPConnection(http.client.HTTPConnection):
+    def connect(self) -> None:
+        self.sock = _connect(self.host, self.port)
+        self.sock.settimeout(self.timeout)
+
+
+class _HTTPSConnection(http.client.HTTPSConnection):
+    def connect(self) -> None:
+        sock = _connect(self.host, self.port)
+        sock.settimeout(self.timeout)
+        context = ssl.create_default_context()
+        self.sock = context.wrap_socket(sock, server_hostname=self.host)
+
+
 def http_transport(
     method: str,
     url: str,
@@ -51,20 +93,27 @@ def http_transport(
     body: dict[str, Any] | None,
     timeout: float,
 ) -> tuple[int, Any]:
-    """Default transport: one HTTP request with urllib."""
+    """Default transport: one HTTP request, failing over dead addresses fast."""
+    parts = urllib.parse.urlsplit(url)
+    secure = parts.scheme == "https"
+    connection_class = _HTTPSConnection if secure else _HTTPConnection
+    port = parts.port or (443 if secure else 80)
+    connection = connection_class(parts.hostname or "", port, timeout=timeout)
+    path = parts.path + (f"?{parts.query}" if parts.query else "")
     data = json.dumps(body).encode() if body is not None else None
-    request = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.status, json.loads(response.read() or b"null")
-    except urllib.error.HTTPError as exc:
-        try:
-            payload = json.loads(exc.read() or b"null")
-        except json.JSONDecodeError:
-            payload = None
-        return exc.code, payload
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        connection.request(method, path, body=data, headers=headers)
+        response = connection.getresponse()
+        raw = response.read()
+    except (OSError, http.client.HTTPException) as exc:
         raise LLMError(f"{url} unreachable: {exc}") from exc
+    finally:
+        connection.close()
+    try:
+        payload = json.loads(raw) if raw else None
+    except json.JSONDecodeError:
+        payload = raw.decode(errors="replace")[:300]
+    return response.status, payload
 
 
 class ChatClient:
@@ -75,8 +124,9 @@ class ChatClient:
         api_key: Sent as a bearer token (None for a local Ollama).
         transport: How requests are sent (tests inject a fake one).
         timeout: Seconds before a call is abandoned.
-        max_rate_retries: Retries after an HTTP 429 (rate limit), waiting as
-            the provider asks (``retry_after``) or with exponential backoff.
+        max_rate_retries: Retries after an HTTP 429 (rate limit) or 503
+            (overloaded), waiting as the provider asks (``retry_after``) or
+            with exponential backoff.
         sleep: Waiting function (tests replace it).
     """
 
@@ -103,7 +153,7 @@ class ChatClient:
         messages: list[dict[str, str]],
         *,
         temperature: float = 0.0,
-        max_tokens: int = 800,
+        max_tokens: int = 2000,
         json_mode: bool = True,
     ) -> ChatResponse:
         """One chat completion; ``json_mode`` asks for a JSON object answer.
@@ -156,7 +206,8 @@ class ChatClient:
     def _request(
         self, method: str, path: str, body: dict[str, Any] | None
     ) -> tuple[int, Any]:
-        headers = {"Content-Type": "application/json"}
+        # An explicit User-Agent: Groq's firewall rejects urllib's default one.
+        headers = {"Content-Type": "application/json", "User-Agent": USER_AGENT}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
         delay = 2.0
@@ -164,7 +215,8 @@ class ChatClient:
             status, payload = self._transport(
                 method, self.base_url + path, headers, body, self.timeout
             )
-            if status != 429 or attempt == self.max_rate_retries:
+            # 429: rate limit; 503: model overloaded. Both are transient.
+            if status not in (429, 503) or attempt == self.max_rate_retries:
                 return status, payload
             self._sleep(_retry_after(payload) or delay)
             delay *= 2

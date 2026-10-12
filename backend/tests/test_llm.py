@@ -251,10 +251,8 @@ class TestProviders:
         assert available_models(only=["gemini"]) == []
 
     def test_estimated_cost_is_that_of_a_typical_step(self) -> None:
-        model = next(
-            m for m in REAL_MODELS if m.provider_model == "llama-3.1-8b-instant"
-        )
-        assert model.estimated_cost == pytest.approx((1000 * 0.05 + 300 * 0.08) / 1e6)
+        model = next(m for m in REAL_MODELS if m.provider_model == "openai/gpt-oss-20b")
+        assert model.estimated_cost == pytest.approx((1000 * 0.10 + 300 * 0.50) / 1e6)
 
     def test_load_models_from_json(self, tmp_path: Path) -> None:
         path = tmp_path / "modeles.json"

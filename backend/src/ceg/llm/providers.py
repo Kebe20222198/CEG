@@ -13,8 +13,9 @@ prices change over time: ``ceg llm check`` compares them with what each
 provider actually serves, and ``load_models()`` replaces them from a JSON
 file without touching the code.
 
-Prices are public list prices per million tokens (indicative, mid-2026); they
-give every call a comparable cost even on a free tier. A local model costs 0.
+Prices are public list prices per million tokens (indicative, checked in
+October 2026); they give every call a comparable cost even on a free tier.
+A local model costs 0.
 """
 
 from __future__ import annotations
@@ -51,8 +52,8 @@ class Provider:
             return bool(self.api_key())
         return _answers(self.base_url)
 
-    def client(self) -> ChatClient:
-        return ChatClient(self.base_url, self.api_key())
+    def client(self, timeout: float = 120.0) -> ChatClient:
+        return ChatClient(self.base_url, self.api_key(), timeout=timeout)
 
 
 def providers() -> dict[str, Provider]:
@@ -118,14 +119,14 @@ FAST, BALANCED, QUALITY = (
 )
 
 REAL_MODELS: list[ModelProfile] = [
-    real_model("groq", "llama-3.1-8b-instant", FAST, input_price=0.05,
-               output_price=0.08, latency_ms=800, prior_quality=0.70),
-    real_model("groq", "llama-3.3-70b-versatile", BALANCED, input_price=0.59,
-               output_price=0.79, latency_ms=1500, prior_quality=0.80),
+    real_model("groq", "openai/gpt-oss-20b", FAST, input_price=0.10,
+               output_price=0.50, latency_ms=1000, prior_quality=0.75),
+    real_model("groq", "openai/gpt-oss-120b", BALANCED, input_price=0.15,
+               output_price=0.75, latency_ms=1500, prior_quality=0.82),
     real_model("gemini", "gemini-2.5-flash-lite", FAST, input_price=0.10,
-               output_price=0.40, latency_ms=2000, prior_quality=0.75),
+               output_price=0.40, latency_ms=1500, prior_quality=0.75),
     real_model("gemini", "gemini-2.5-flash", QUALITY, input_price=0.30,
-               output_price=2.50, latency_ms=5000, prior_quality=0.85),
+               output_price=2.50, latency_ms=4000, prior_quality=0.85),
     real_model("ollama", "qwen2.5:3b", FAST, input_price=0.0,
                output_price=0.0, latency_ms=20000, prior_quality=0.60),
 ]  # fmt: skip
@@ -185,7 +186,7 @@ def check_provider(provider: Provider) -> tuple[bool, list[str], str]:
     if provider.key_env is not None and not provider.api_key():
         return False, [], f"clé absente ({provider.key_env})"
     try:
-        served = provider.client().list_models()
+        served = provider.client(timeout=15.0).list_models()
     except LLMError as exc:
         return False, [], str(exc)
     return True, served, f"{len(served)} modèles servis"
