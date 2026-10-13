@@ -323,3 +323,75 @@ class TestPortabilityExperiment:
         assert merged["h2_met"] is False
         with pytest.raises(ValueError, match="Juges différents"):
             merge(report("gemini", 0.8), report("ollama", 0.6, judge="autre"))
+
+
+class TestLatencyBudgetOnRealCalls:
+    def test_the_call_timeout_is_the_time_the_engine_allows(self) -> None:
+        from ceg.runtime.decision_engine import CALL_TIME_LIMIT_MS
+
+        seen: list[float] = []
+
+        def transport(
+            method: str, url: str, headers: Any, body: Any, timeout: float
+        ) -> tuple[int, Any]:
+            seen.append(timeout)
+            answer = {"urgents": [], "a_des_urgences": False}
+            return 200, _chat_payload(json.dumps(answer))
+
+        executor = LLMExecutor(
+            _tickets_graph(),
+            clients={"fake": ChatClient("https://x/v1", transport=transport)},
+        )
+        token = CALL_TIME_LIMIT_MS.set(2500.0)
+        try:
+            executor.execute("detecter_urgences", "Repérer", {}, model=FAKE_FAST)
+        finally:
+            CALL_TIME_LIMIT_MS.reset(token)
+        assert 0 < seen[0] <= 2.5
+
+    def test_a_cut_call_counts_the_time_it_took(self) -> None:
+        def transport(
+            method: str, url: str, headers: Any, body: Any, timeout: float
+        ) -> tuple[int, Any]:
+            raise LLMError("https://x/v1/chat/completions: timed out")
+
+        executor = LLMExecutor(
+            _tickets_graph(),
+            clients={"fake": ChatClient("https://x/v1", transport=transport)},
+        )
+        with pytest.raises(ExecutionError) as info:
+            executor.execute("lire_tickets", "Lire", {}, model=FAKE_FAST)
+        assert info.value.latency_ms >= 0.0
+        assert "timed out" in info.value.reason
+
+    def test_no_rate_limit_wait_beyond_the_deadline(self) -> None:
+        waits: list[float] = []
+        client = ChatClient(
+            "https://x/v1",
+            transport=FakeTransport(
+                lambda body: (429, {"error": {"message": "try again in 30s"}})
+            ),
+            sleep=waits.append,
+        )
+        with pytest.raises(LLMError, match="HTTP 429"):
+            client.chat("m", [], timeout=5.0)
+        assert waits == []  # 30 s of waiting would not fit in 5 s
+
+    def test_a_step_sees_inputs_and_its_dependencies_only(self) -> None:
+        executor = LLMExecutor(_tickets_graph(), clients={})
+        inputs = {
+            "tickets": [1, 2],
+            "lire_tickets": {"n": 2},
+            "classer": {"c": 1},
+            "detecter_urgences": {"u": 1},
+        }
+        # rediger_synthese depends on classer and detecter_urgences only.
+        assert executor._relevant("rediger_synthese", inputs) == {
+            "tickets": [1, 2],
+            "classer": {"c": 1},
+            "detecter_urgences": {"u": 1},
+        }
+        assert executor._relevant("classer", inputs) == {
+            "tickets": [1, 2],
+            "lire_tickets": {"n": 2},
+        }

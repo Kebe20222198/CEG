@@ -17,6 +17,7 @@ so quality can be measured on real outputs (LLM-as-a-judge).
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 from ceg.compiler.mock_executor import ExecutionError, ExecutionResult
@@ -24,9 +25,9 @@ from ceg.evaluation.models import Criterion, CriterionScore, JudgeVerdict
 from ceg.llm.client import ChatClient, LLMError
 from ceg.llm.providers import providers
 from ceg.models.graph import CEGGraph, EdgeType
-from ceg.runtime.decision_engine import ModelProfile
+from ceg.runtime.decision_engine import CALL_TIME_LIMIT_MS, ModelProfile
 
-MAX_INPUT_CHARS = 8000
+MAX_INPUT_CHARS = 16000
 
 SYSTEM_PROMPT = (
     "Tu exécutes une étape d'un workflow. Réponds uniquement par un objet JSON "
@@ -55,6 +56,8 @@ class LLMExecutor:
     ) -> None:
         self.objective = graph.task.objective if graph.task else ""
         self.required_keys = _required_keys(graph)
+        self.dependencies = _dependencies(graph)
+        self.step_ids = set(self.dependencies)
         self._clients = dict(clients or {})
         self.confidence = confidence
         self.calls: list[dict[str, Any]] = []
@@ -74,11 +77,21 @@ class LLMExecutor:
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": self._prompt(node_id, objective, inputs)},
         ]
+        # The engine says how long this call may take within the task's
+        # latency budget: a slower call is cut, and counts as a failure.
+        limit_ms = CALL_TIME_LIMIT_MS.get()
+        timeout = None if limit_ms is None else max(limit_ms / 1000, 1.0)
+        started = time.perf_counter()
         try:
-            response = self._client(model.provider).chat(model.provider_model, messages)
+            response = self._client(model.provider).chat(
+                model.provider_model, messages, timeout=timeout
+            )
         except LLMError as exc:
+            elapsed_ms = (time.perf_counter() - started) * 1000
             self._record(node_id, model, attempt, ok=False, error=str(exc))
-            raise ExecutionError(node_id, f"{model.name}: {exc}") from exc
+            raise ExecutionError(
+                node_id, f"{model.name}: {exc}", latency_ms=elapsed_ms
+            ) from exc
 
         cost = model.cost_of(response.input_tokens, response.output_tokens)
         try:
@@ -106,8 +119,19 @@ class LLMExecutor:
             confidence=self.confidence,
         )
 
+    def _relevant(self, node_id: str, inputs: dict[str, Any]) -> dict[str, Any]:
+        """The workflow's inputs and the outputs of the step's dependencies.
+
+        Outputs of other steps are left out: they cost tokens (free tiers
+        limit tokens per minute) and distract the model.
+        """
+        deps = set(self.dependencies.get(node_id, []))
+        return {k: v for k, v in inputs.items() if k not in self.step_ids or k in deps}
+
     def _prompt(self, node_id: str, objective: str, inputs: dict[str, Any]) -> str:
-        data = json.dumps(inputs, ensure_ascii=False, default=str)
+        data = json.dumps(
+            self._relevant(node_id, inputs), ensure_ascii=False, default=str
+        )
         if len(data) > MAX_INPUT_CHARS:
             data = data[:MAX_INPUT_CHARS] + " …(tronqué)"
         lines = [
@@ -116,12 +140,14 @@ class LLMExecutor:
             f"Objectif de l'étape : {objective}",
             "",
             "Données disponibles (entrées du workflow et résultats des étapes "
-            "précédentes), en JSON :",
+            "dont celle-ci dépend), en JSON :",
             data,
             "",
         ]
         lines.append(
-            "Réponds par un objet JSON qui contient le résultat complet de l'étape."
+            "Réponds par un objet JSON qui contient le résultat de l'étape. Ne "
+            "recopie pas les données d'entrée : donne seulement ce que l'étape "
+            "produit, de façon concise."
         )
         for key in self.required_keys.get(node_id, []):
             lines.append(
@@ -249,6 +275,16 @@ def parse_json_object(text: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("la réponse n'est pas un objet JSON")
     return value
+
+
+def _dependencies(graph: CEGGraph) -> dict[str, list[str]]:
+    """Direct dependencies of every step, sub-graphs included."""
+    deps: dict[str, list[str]] = {}
+    for node in graph.nodes:
+        deps[node.id] = list(node.dependencies)
+        if node.subgraph is not None:
+            deps.update(_dependencies(node.subgraph))
+    return deps
 
 
 def _required_keys(graph: CEGGraph) -> dict[str, list[str]]:

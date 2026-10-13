@@ -155,8 +155,12 @@ class ChatClient:
         temperature: float = 0.0,
         max_tokens: int = 2000,
         json_mode: bool = True,
+        timeout: float | None = None,
     ) -> ChatResponse:
         """One chat completion; ``json_mode`` asks for a JSON object answer.
+
+        ``timeout`` (seconds) bounds the whole call, rate-limit waits
+        included; default: the client's timeout.
 
         Raises:
             LLMError: On a network or HTTP error, or an empty answer.
@@ -170,12 +174,13 @@ class ChatClient:
         if json_mode:
             body["response_format"] = {"type": "json_object"}
         start = time.perf_counter()
-        status, payload = self._request("POST", "/chat/completions", body)
+        deadline = start + (timeout if timeout is not None else self.timeout)
+        status, payload = self._request("POST", "/chat/completions", body, deadline)
         if status == 400 and json_mode and "response_format" in json.dumps(payload):
             # A provider without JSON mode: ask again, the prompt still asks
             # for JSON and the answer is parsed leniently.
             body.pop("response_format")
-            status, payload = self._request("POST", "/chat/completions", body)
+            status, payload = self._request("POST", "/chat/completions", body, deadline)
         latency_ms = (time.perf_counter() - start) * 1000
         if status != 200:
             raise LLMError(f"HTTP {status}: {_error_text(payload)}", status=status)
@@ -204,7 +209,11 @@ class ChatClient:
         )
 
     def _request(
-        self, method: str, path: str, body: dict[str, Any] | None
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None,
+        deadline: float | None = None,
     ) -> tuple[int, Any]:
         # An explicit User-Agent: Groq's firewall rejects urllib's default one.
         headers = {"Content-Type": "application/json", "User-Agent": USER_AGENT}
@@ -212,13 +221,21 @@ class ChatClient:
             headers["Authorization"] = f"Bearer {self._api_key}"
         delay = 2.0
         for attempt in range(self.max_rate_retries + 1):
+            timeout = self.timeout
+            if deadline is not None:
+                timeout = deadline - time.perf_counter()
+                if timeout <= 0:
+                    raise LLMError(f"{self.base_url + path}: timed out")
             status, payload = self._transport(
-                method, self.base_url + path, headers, body, self.timeout
+                method, self.base_url + path, headers, body, timeout
             )
             # 429: rate limit; 503: model overloaded. Both are transient.
             if status not in (429, 503) or attempt == self.max_rate_retries:
                 return status, payload
-            self._sleep(_retry_after(payload) or delay)
+            wait = _retry_after(payload) or delay
+            if deadline is not None and time.perf_counter() + wait >= deadline:
+                return status, payload  # no time left to wait and retry
+            self._sleep(wait)
             delay *= 2
         return status, payload  # pragma: no cover - loop always returns
 

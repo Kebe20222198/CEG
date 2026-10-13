@@ -163,8 +163,11 @@ def _cmd_run(args: argparse.Namespace) -> int:
     executor = None
     if llm_models is not None:
         from ceg.llm.executor import LLMExecutor
+        from ceg.llm.inputs import for_real_models
 
         executor = LLMExecutor(graph)
+        # A real model sees only its prompt: the file's rows, not its path.
+        inputs = for_real_models(inputs)
     try:
         workflow = _compile(
             args.backend, graph, definition, engine=engine, executor=executor

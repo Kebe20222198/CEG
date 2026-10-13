@@ -279,8 +279,10 @@ export default function TaskExecutionModal({
               </select>
               {models !== 'simulated' && (
                 <div className="small muted" style={{ marginTop: 6 }}>
-                  Les étapes seront envoyées aux modèles choisis par le moteur. Un
-                  workflow qui lit un fichier CSV doit rester sur les modèles simulés.
+                  Les étapes seront envoyées aux modèles choisis par le moteur, avec
+                  leurs données (le contenu d'un fichier CSV, pas son chemin). Les
+                  contraintes déclarées restent garanties : un appel trop lent est
+                  interrompu.
                 </div>
               )}
             </div>

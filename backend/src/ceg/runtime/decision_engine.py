@@ -18,6 +18,7 @@ Key public API:
 from __future__ import annotations
 
 import threading
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -163,6 +164,13 @@ _CAPABILITY_RATINGS: dict[str, dict[str, float]] = {
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
+
+
+# Time the current model call may take (ms), set by ``RuntimeDecisionEngine.call``
+# for the executor: None means no latency limit.
+CALL_TIME_LIMIT_MS: ContextVar[float | None] = ContextVar(
+    "CALL_TIME_LIMIT_MS", default=None
+)
 
 
 class ModelProfile(BaseModel):
@@ -658,6 +666,12 @@ class RuntimeDecisionEngine:
         cost, latency = model.estimated_cost, model.estimated_latency_ms
         if not self._try_reserve(cost, latency):
             raise BudgetUnavailableError(node.id, model.name)
+        # What this call may take: its reservation plus the latency budget no
+        # other call has reserved. A real executor makes it its timeout, so a
+        # call slower than estimated cannot overrun the declared latency.
+        remaining = self.latency_remaining_ms
+        allowed = None if remaining is None else remaining + latency
+        limit = CALL_TIME_LIMIT_MS.set(allowed)
         try:
             result = executor.execute(
                 node_id=node.id,
@@ -673,6 +687,8 @@ class RuntimeDecisionEngine:
         except BaseException:
             self._release(cost, latency)
             raise
+        finally:
+            CALL_TIME_LIMIT_MS.reset(limit)
         self._release(cost, latency)
         self.record_success(node, model, result, learn=learn)
         return result

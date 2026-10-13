@@ -91,15 +91,20 @@ class TestRealModelsThroughTheApi:
         assert response.status_code == 400
         assert "Unknown model providers" in response.json()["detail"]
 
-    def test_a_csv_workflow_is_refused(
+    def test_a_csv_workflow_sends_the_rows_not_the_path(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        _fake_groq(monkeypatch)
+        requests = _fake_groq(monkeypatch)
         response = client.post(
             "/tasks/analyse_ventes_alertes/execute", json={"llm_providers": ["groq"]}
         )
-        assert response.status_code == 400
-        assert "CSV" in response.json()["detail"]
+        assert response.status_code == 200, response.text
+        prompt = requests[0]["messages"][-1]["content"]
+        assert "csv_path" not in prompt and ".csv" in prompt  # the file's name
+        assert (
+            '"colonnes": ["date", "region", "montant", "produit", "quantite"]' in prompt
+        )
+        assert "Nord" in prompt  # the rows themselves
 
     def test_a_run_on_real_models(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch

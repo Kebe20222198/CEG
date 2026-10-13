@@ -289,15 +289,18 @@ def start_execution(
     # A run without inputs uses the workflow's default inputs.
     inputs = dict(payload.inputs or (spec.default_inputs if spec else {}))
     llm = _llm_providers(payload.llm_providers)
-    if llm and spec is not None and spec.uses_csv:
-        raise ExecutionRequestError(
-            "This workflow reads a CSV file: a real model would only receive "
-            "the file path, not its content. Run it with simulated models."
-        )
     if spec is not None and spec.uses_csv:
         inputs["csv_path"] = resolve_csv_path(payload)
     elif payload.csv_path:
         raise ExecutionRequestError("This task's pipeline does not read a CSV file.")
+    if llm:
+        # A real model sees only its prompt: the file's rows, not its path.
+        from ceg.llm.inputs import for_real_models
+
+        try:
+            inputs = for_real_models(inputs)
+        except (OSError, UnicodeDecodeError) as exc:
+            raise ExecutionRequestError(f"Cannot read the CSV file: {exc}") from exc
 
     # Compiling checks the plan against the backend and the constraints:
     # a request that cannot be honoured is refused before anything is stored.
