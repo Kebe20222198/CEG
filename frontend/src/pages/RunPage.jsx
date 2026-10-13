@@ -46,6 +46,9 @@ export default function RunPage({ runId, tab = 'trace', onRunNew }) {
             <span className="chip">{run.scenario_name}</span>
             {run.backend && <span className="chip">⚙ {run.backend}</span>}
             {run.optimizer && <span className="chip">optimiseur {run.optimizer}</span>}
+            <span className={`chip ${run.models ? 'violet' : ''}`}>
+              {run.models ? `modèles réels : ${run.models.replaceAll(',', ', ')}` : 'modèles simulés'}
+            </span>
             <span className="chip">{formatDate(run.started_at)}</span>
             <span className="chip">{formatCost(run.total_cost)} · {formatMs(run.total_latency_ms)}</span>
           </div>

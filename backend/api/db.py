@@ -75,6 +75,8 @@ class ExecutionModel(Base):
     backend: Mapped[str | None] = mapped_column(String, nullable=True)
     # Model selection: static registry ratings or learned statistics.
     optimizer: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Real model providers used ("gemini,groq"); None: simulated models.
+    models: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(
         String, nullable=False, default="running", index=True
     )

@@ -46,7 +46,7 @@ export default function RunGrid({ grid }) {
                 <i
                   className={`run-bar s-${run.status}`}
                   style={{ height: `${Math.max(4, (run.total_latency_ms / maxLatency) * 42)}px` }}
-                  title={`${run.id}\n${formatDate(run.started_at)} — ${run.status}\n${formatCost(run.total_cost)} · ${formatMs(run.total_latency_ms)}\n${run.backend || ''} · ${run.optimizer || ''}`}
+                  title={`${run.id}\n${formatDate(run.started_at)} — ${run.status}\n${formatCost(run.total_cost)} · ${formatMs(run.total_latency_ms)}\n${run.backend || ''} · ${run.optimizer || ''}${run.models ? ` · modèles réels : ${run.models}` : ''}`}
                   onClick={() => navigate(`/runs/${run.id}`)}
                 />
               </th>

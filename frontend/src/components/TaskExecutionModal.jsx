@@ -55,6 +55,9 @@ export default function TaskExecutionModal({
   const [backend, setBackend] = useState('langgraph');
   // Model selection: static registry ratings, or statistics learned from runs.
   const [optimizer, setOptimizer] = useState('static');
+  // Models: simulated (reproducible), or real ones from configured providers.
+  const [llmProviders, setLlmProviders] = useState([]);
+  const [models, setModels] = useState('simulated');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -79,6 +82,10 @@ export default function TaskExecutionModal({
           if (data && data.length > 0) setBackends(data);
         })
         .catch(() => { });
+      fetch(`${apiBaseUrl}/llm/providers`)
+        .then((res) => res.ok && res.json())
+        .then((data) => setLlmProviders(Array.isArray(data) ? data : []))
+        .catch(() => setLlmProviders([]));
     }
   }, [isOpen, apiBaseUrl, initialTaskId]);
 
@@ -102,6 +109,7 @@ export default function TaskExecutionModal({
           scenario_name: scenarioName,
           backend,
           optimizer,
+          llm_providers: models === 'simulated' ? [] : [models],
         }),
       });
 
@@ -333,6 +341,53 @@ export default function TaskExecutionModal({
               </select>
             </div>
 
+            <div>
+              <label
+                style={{
+                  fontSize: '0.6875rem',
+                  fontFamily: 'var(--font-mono)',
+                  color: 'var(--text-muted)',
+                  display: 'block',
+                  marginBottom: '6px',
+                  textTransform: 'uppercase',
+                }}
+              >
+                MODÈLES
+              </label>
+              <select
+                value={models}
+                onChange={(e) => setModels(e.target.value)}
+                className="mono"
+                style={{
+                  width: '100%',
+                  padding: '9px 12px',
+                  borderRadius: 'var(--radius-sm)',
+                  background: 'var(--bg-surface-elevated)',
+                  border: '1px solid var(--border-default)',
+                  color: 'var(--text-primary)',
+                  fontSize: '0.8125rem',
+                  outline: 'none',
+                }}
+              >
+                <option value="simulated">simulés (reproductibles, sans coût)</option>
+                {llmProviders.some((p) => p.configured) && (
+                  <option value="all">réels : tous les fournisseurs configurés</option>
+                )}
+                {llmProviders.map((p) => (
+                  <option key={p.id} value={p.id} disabled={!p.configured}>
+                    réels : {p.id}
+                    {p.configured ? '' : ' (non configuré)'}
+                  </option>
+                ))}
+              </select>
+              {models !== 'simulated' && (
+                <div className="small muted" style={{ marginTop: 6 }}>
+                  Les étapes seront envoyées aux modèles choisis par le moteur. Un
+                  workflow qui lit un fichier CSV doit rester sur les modèles simulés.
+                </div>
+              )}
+            </div>
+
             <div
               style={{
                 display: 'flex',
@@ -348,7 +403,7 @@ export default function TaskExecutionModal({
               </button>
               <button type="submit" className="btn btn-primary" disabled={loading}>
                 <Play size={12} fill="currentColor" />
-                <span>{loading ? 'Compiling & Running CEG...' : 'Exécuter'}</span>
+                <span>{loading ? (models === 'simulated' ? 'Exécution…' : 'Appels aux modèles…') : 'Exécuter'}</span>
               </button>
             </div>
           </form>

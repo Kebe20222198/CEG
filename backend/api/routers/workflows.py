@@ -186,6 +186,7 @@ def workflow_grid(
                 started_at=run.started_at.isoformat() if run.started_at else None,
                 backend=run.backend,
                 optimizer=run.optimizer,
+                models=run.models,
                 total_cost=run.total_cost,
                 total_latency_ms=run.total_latency_ms,
             )

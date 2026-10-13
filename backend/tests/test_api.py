@@ -49,7 +49,8 @@ def test_models_endpoint_lists_the_engine_registry(client):
     response = client.get("/models")
     assert response.status_code == 200
     models = response.json()
-    assert {m["id"] for m in models} == REGISTRY_MODELS
+    simulated = {m["id"] for m in models if m["provider"] is None}
+    assert simulated == REGISTRY_MODELS
     assert {m["tier"] for m in models} == {"fast", "balanced", "quality"}
 
 

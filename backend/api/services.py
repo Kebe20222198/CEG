@@ -83,10 +83,44 @@ def _load_statistics() -> ModelStatistics:
 LEARNED_STATISTICS = _load_statistics()
 
 
-def _engine_for(optimizer: str | None) -> RuntimeDecisionEngine:
-    """Engine using the learned statistics, or the static ratings."""
+def _engine_for(
+    optimizer: str | None, llm_providers: list[str] | None = None
+) -> RuntimeDecisionEngine:
+    """Engine using the learned statistics or the static ratings, choosing
+    among simulated models or the real models of ``llm_providers``.
+
+    Raises:
+        ExecutionRequestError: If none of the requested providers is usable.
+    """
     statistics = LEARNED_STATISTICS if optimizer == "learned" else None
-    return RuntimeDecisionEngine(statistics=statistics)
+    if not llm_providers:
+        return RuntimeDecisionEngine(statistics=statistics)
+    from ceg.llm.providers import REAL_MODELS, available_models
+
+    models = available_models(REAL_MODELS, llm_providers)
+    if not models:
+        raise ExecutionRequestError(
+            f"No real model available from {llm_providers}: set the API key "
+            "(.env) or start the local server (see GET /llm/providers)."
+        )
+    # Real calls take seconds: the per-call limit is the task's latency.
+    return RuntimeDecisionEngine(
+        statistics=statistics, available_models=models, max_latency_ms=120_000.0
+    )
+
+
+def _llm_providers(requested: list[str]) -> list[str]:
+    """Provider names of a request (``all`` expanded), validated."""
+    from ceg.llm.providers import providers
+
+    known = list(providers())
+    names = known if "all" in requested else list(dict.fromkeys(requested))
+    unknown = [n for n in names if n not in known]
+    if unknown:
+        raise ExecutionRequestError(
+            f"Unknown model providers {unknown}. Available: {known}."
+        )
+    return names
 
 
 def save_statistics() -> None:
@@ -197,6 +231,17 @@ def _executor_of(spec: PipelineSpec | None) -> MockExecutor:
     return spec.make_executor() if spec is not None else MockExecutor()
 
 
+def _executor_for(
+    spec: PipelineSpec | None, graph: CEGGraph, llm_providers: list[str]
+) -> Any:
+    """The workflow's own executor, or a real-model executor."""
+    if not llm_providers:
+        return _executor_of(spec)
+    from ceg.llm.executor import LLMExecutor
+
+    return LLMExecutor(graph)
+
+
 def _backend(name: str) -> Backend:
     try:
         return get_backend(name)
@@ -243,6 +288,12 @@ def start_execution(
 
     # A run without inputs uses the workflow's default inputs.
     inputs = dict(payload.inputs or (spec.default_inputs if spec else {}))
+    llm = _llm_providers(payload.llm_providers)
+    if llm and spec is not None and spec.uses_csv:
+        raise ExecutionRequestError(
+            "This workflow reads a CSV file: a real model would only receive "
+            "the file path, not its content. Run it with simulated models."
+        )
     if spec is not None and spec.uses_csv:
         inputs["csv_path"] = resolve_csv_path(payload)
     elif payload.csv_path:
@@ -251,9 +302,9 @@ def start_execution(
     # Compiling checks the plan against the backend and the constraints:
     # a request that cannot be honoured is refused before anything is stored.
     backend = _backend(payload.backend)
-    engine = _engine_for(payload.optimizer)
+    engine = _engine_for(payload.optimizer, llm)
     try:
-        workflow = _compile(backend, graph, _executor_of(spec), engine)
+        workflow = _compile(backend, graph, _executor_for(spec, graph, llm), engine)
     except ValueError as exc:
         raise ExecutionRequestError(str(exc)) from exc
 
@@ -263,6 +314,7 @@ def start_execution(
         scenario_name=payload.scenario_name,
         backend=backend.name,
         optimizer=payload.optimizer,
+        models=",".join(llm) or None,
         status="running",
         started_at=_now(),
         graph_json=graph.model_dump_json(),
@@ -286,7 +338,8 @@ def start_execution(
             evaluation=_Evaluation(
                 criteria=criteria,
                 declaration=declaration,
-                robustness_runs=payload.robustness_runs,
+                # Robustness re-runs the workflow's own (simulated) executor.
+                robustness_runs=0 if llm else payload.robustness_runs,
                 spec=spec,
                 inputs=inputs,
                 backend=backend.name,
@@ -323,8 +376,12 @@ def resume_execution(
     spec = _pipeline_of(task)
     # The plan the execution started with, with its task and constraints.
     graph = CEGGraph.model_validate_json(record.graph_json or "{}")
-    engine = _engine_for(record.optimizer)
-    workflow = _compile(backend, graph, _executor_of(spec), engine)
+    llm = record.models.split(",") if record.models else []
+    try:
+        engine = _engine_for(record.optimizer, llm)
+    except ExecutionRequestError as exc:
+        raise ExecutionStateError(str(exc)) from exc
+    workflow = _compile(backend, graph, _executor_for(spec, graph, llm), engine)
 
     snapshot = workflow.get_state(record.id)
     if not snapshot.next:
@@ -595,6 +652,7 @@ def _summary_fields(record: ExecutionModel) -> dict[str, Any]:
         "scenario_name": record.scenario_name,
         "backend": record.backend,
         "optimizer": record.optimizer,
+        "models": record.models,
         "status": record.status,
         "started_at": record.started_at.isoformat() if record.started_at else None,
         "completed_at": (

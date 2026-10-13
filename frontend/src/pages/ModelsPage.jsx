@@ -31,7 +31,45 @@ export default function ModelsPage() {
       </div>
 
       <div className="card">
-        <div className="card-header"><Cpu size={14} /> Registre des modèles (simulés)</div>
+        <div className="card-header"><Cpu size={14} /> Modèles réels (Gemini, Groq, Ollama)</div>
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Modèle</th>
+              <th>Fournisseur</th>
+              <th>Tier</th>
+              <th>Coût estimé / étape</th>
+              <th>Latence estimée</th>
+              <th>Disponible</th>
+            </tr>
+          </thead>
+          <tbody>
+            {models.filter((m) => m.provider).map((m) => (
+              <tr key={m.id}>
+                <td className="mono nowrap">{m.id.split(':').slice(1).join(':')}</td>
+                <td className="mono">{m.provider}</td>
+                <td><span className="chip">{m.tier}</span></td>
+                <td className="mono">${m.estimated_cost.toFixed(5)}</td>
+                <td className="mono">{(m.estimated_latency_ms / 1000).toFixed(1)} s</td>
+                <td className="small">
+                  {m.available ? (
+                    <span style={{ color: 'var(--status-completed)' }}>oui</span>
+                  ) : (
+                    <span className="muted">non — clé absente (.env) ou serveur arrêté</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="card-body small muted">
+          Coût calculé avec les prix publics des modèles, pour une étape type (1 000 jetons en
+          entrée, 300 en sortie). À choisir dans « Exécuter » (champ « Modèles »).
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-header"><Cpu size={14} /> Modèles simulés</div>
         <table className="table">
           <thead>
             <tr>
@@ -43,7 +81,7 @@ export default function ModelsPage() {
             </tr>
           </thead>
           <tbody>
-            {models.map((m) => (
+            {models.filter((m) => !m.provider).map((m) => (
               <tr key={m.id}>
                 <td className="mono nowrap">{m.id}</td>
                 <td><span className="chip">{m.tier}</span></td>

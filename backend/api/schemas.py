@@ -105,6 +105,14 @@ class ExecuteTaskRequest(BaseModel):
             "them)."
         ),
     )
+    llm_providers: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Run the steps on real models from these providers (see GET "
+            "/llm/providers): e.g. ['groq'], ['gemini', 'ollama'] or ['all']. "
+            "Empty: simulated models."
+        ),
+    )
     robustness_runs: int = Field(
         default=0,
         ge=0,
@@ -143,6 +151,9 @@ class ExecutionResponse(BaseModel):
     scenario_name: str
     backend: str | None = None
     optimizer: str | None = None
+    models: str | None = Field(
+        default=None, description="Real model providers used; None: simulated."
+    )
     status: str
     started_at: str | None = None
     completed_at: str | None = None
@@ -224,13 +235,27 @@ class BenchmarkResponse(BaseModel):
 
 
 class ModelInfo(BaseModel):
-    """A model of the Runtime Decision Engine registry (simulated models)."""
+    """A model the Runtime Decision Engine can pick: simulated or real."""
 
     id: str
     tier: str
     estimated_cost: float
     estimated_latency_ms: float
     supported_capabilities: list[str]
+    provider: str | None = Field(
+        default=None, description="Real model provider; None: simulated model."
+    )
+    available: bool = Field(
+        default=True, description="Usable now (provider key set or server up)."
+    )
+
+
+class LLMProviderInfo(BaseModel):
+    """A real model provider and whether it can be used."""
+
+    id: str
+    configured: bool
+    models: list[str]
 
 
 class BackendInfo(BaseModel):
@@ -301,6 +326,7 @@ class GridRun(BaseModel):
     started_at: str | None = None
     backend: str | None = None
     optimizer: str | None = None
+    models: str | None = None
     total_cost: float
     total_latency_ms: float
 

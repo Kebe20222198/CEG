@@ -3,6 +3,7 @@
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +13,12 @@ from api.db import init_db
 from api.routers import benchmark, executions, health, models, tasks, workflows
 from api.seed import seed_database
 from ceg import __version__
+from ceg.llm.providers import load_dotenv
+
+# API keys of real model providers: from the environment or the repository's
+# .env file (ignored by Git), whichever way the API is started.
+for _folder in (Path.cwd(), Path.cwd().parent, Path(__file__).resolve().parents[2]):
+    load_dotenv(_folder / ".env")
 
 # Comma-separated list of origins allowed to call the API from a browser.
 CORS_ORIGINS = [

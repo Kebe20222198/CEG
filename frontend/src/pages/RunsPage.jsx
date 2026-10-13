@@ -168,6 +168,7 @@ export default function RunsPage({ executions, onRefresh }) {
                     <td className="mono small">
                       <div>{e.backend || '—'}</div>
                       <div className="muted">{e.optimizer || ''}</div>
+                      {e.models && <div style={{ color: 'var(--accent-violet)' }}>réels : {e.models}</div>}
                     </td>
                     <td className="small muted nowrap">{formatDate(e.started_at)}</td>
                     <td className="mono small">{formatCost(e.total_cost)}</td>

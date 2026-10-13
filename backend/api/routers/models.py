@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from api.pipelines import pipelines
 from api.schemas import (
     BackendInfo,
+    LLMProviderInfo,
     ModelInfo,
     OptimizerStatisticsResponse,
     PipelineInfo,
@@ -18,7 +19,11 @@ router = APIRouter(tags=["Models"])
 
 @router.get("/models", response_model=list[ModelInfo], summary="Modèles disponibles")
 def list_models() -> list[ModelInfo]:
-    """Modèles (simulés) parmi lesquels le Runtime Decision Engine choisit."""
+    """Modèles parmi lesquels le Runtime Decision Engine choisit : simulés, puis
+    réels (Gemini, Groq, Ollama), avec leur disponibilité."""
+    from ceg.llm.providers import REAL_MODELS, available_models
+
+    usable = {m.name for m in available_models(REAL_MODELS)}
     return [
         ModelInfo(
             id=m.name,
@@ -26,8 +31,30 @@ def list_models() -> list[ModelInfo]:
             estimated_cost=m.estimated_cost,
             estimated_latency_ms=m.estimated_latency_ms,
             supported_capabilities=m.supported_capabilities,
+            provider=m.provider,
+            available=m.provider is None or m.name in usable,
         )
-        for m in DEFAULT_MODEL_REGISTRY
+        for m in [*DEFAULT_MODEL_REGISTRY, *REAL_MODELS]
+    ]
+
+
+@router.get(
+    "/llm/providers",
+    response_model=list[LLMProviderInfo],
+    summary="Fournisseurs de modèles réels",
+)
+def list_llm_providers() -> list[LLMProviderInfo]:
+    """Gemini, Groq, Ollama : clé présente ou serveur local joignable, et
+    modèles utilisables (champ ``llm_providers`` d'une exécution)."""
+    from ceg.llm.providers import REAL_MODELS, providers
+
+    return [
+        LLMProviderInfo(
+            id=name,
+            configured=provider.is_configured(),
+            models=[m.name for m in REAL_MODELS if m.provider == name],
+        )
+        for name, provider in providers().items()
     ]
 
 
