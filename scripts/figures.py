@@ -340,6 +340,44 @@ def portability_table(report: dict) -> Path:
     return path
 
 
+def sales_real_table(reports: list[dict]) -> Path:
+    """Sales pipeline on real models, checked against the reference."""
+
+    def pct(value: float | None) -> str:
+        return "---" if value is None else f"{round(value * 100)}\\,\\%"
+
+    lines = [
+        "% Généré par scripts/figures.py depuis resultats/ventes_reelles_*.json",
+        "\\begin{tabular}{lrrrrrrr}",
+        "\\toprule",
+        "\\textbf{Fournisseur} & \\textbf{Exéc.} & \\textbf{Correctes} & "
+        "\\textbf{A} & \\textbf{B} & \\textbf{C} & \\textbf{D} & "
+        "\\textbf{Latence} \\\\",
+        "\\midrule",
+    ]
+    for report in reports:
+        for name, result in report["providers"].items():
+            if not result.get("available"):
+                continue
+            s = result["summary"]
+            by = s["by_scenario"]
+            latency = (
+                "---"
+                if s["latency_ms"] is None
+                else f"{fr(s['latency_ms'] / 1000, 1)}\\,s"
+            )
+            lines.append(
+                f"{PROVIDER_LABELS.get(name, name)} & {s['runs']} & "
+                f"{pct(s['correct'])} & "
+                + " & ".join(pct(by.get(k)) for k in "ABCD")
+                + f" & {latency} \\\\"
+            )
+    lines += ["\\bottomrule", "\\end{tabular}", ""]
+    path = TABLES / "ventes_reelles.tex"
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
 def main() -> int:
     missing = [
         name
@@ -369,6 +407,10 @@ def main() -> int:
     if portability.exists():
         report = json.loads(portability.read_text(encoding="utf-8"))
         print(f"✓ {portability_table(report).relative_to(ROOT)}")
+    sales_files = sorted(RESULTS.glob("ventes_reelles_*.json"))
+    if sales_files:
+        reports = [json.loads(f.read_text(encoding="utf-8")) for f in sales_files]
+        print(f"✓ {sales_real_table(reports).relative_to(ROOT)}")
     return 0
 
 
