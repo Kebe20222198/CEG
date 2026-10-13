@@ -231,6 +231,123 @@
           }
         }
       ]
+    },
+    "ollama": {
+      "available": true,
+      "models": [
+        "ollama:qwen2.5:3b"
+      ],
+      "summary": {
+        "runs": 5,
+        "completion": 1.0,
+        "cost_usd": 0.0,
+        "latency_ms": 122032.1,
+        "failed_calls": 0,
+        "urgent_detected": 1.0,
+        "quality": 0.804
+      },
+      "runs": [
+        {
+          "completed": true,
+          "error": null,
+          "cost_usd": 0.0,
+          "latency_ms": 116292.7,
+          "wall_s": 78.95,
+          "calls": 5,
+          "failed_calls": 0,
+          "errors": [],
+          "escalated": true,
+          "urgent_flagged": true,
+          "quality": 0.64,
+          "models": {
+            "lire_tickets": "ollama:qwen2.5:3b",
+            "classer": "ollama:qwen2.5:3b",
+            "detecter_urgences": "ollama:qwen2.5:3b",
+            "escalader": "ollama:qwen2.5:3b",
+            "rediger_synthese": "ollama:qwen2.5:3b"
+          }
+        },
+        {
+          "completed": true,
+          "error": null,
+          "cost_usd": 0.0,
+          "latency_ms": 152055.1,
+          "wall_s": 96.08,
+          "calls": 5,
+          "failed_calls": 0,
+          "errors": [],
+          "escalated": true,
+          "urgent_flagged": true,
+          "quality": 0.82,
+          "models": {
+            "lire_tickets": "ollama:qwen2.5:3b",
+            "classer": "ollama:qwen2.5:3b",
+            "detecter_urgences": "ollama:qwen2.5:3b",
+            "escalader": "ollama:qwen2.5:3b",
+            "rediger_synthese": "ollama:qwen2.5:3b"
+          }
+        },
+        {
+          "completed": true,
+          "error": null,
+          "cost_usd": 0.0,
+          "latency_ms": 148365.5,
+          "wall_s": 109.86,
+          "calls": 5,
+          "failed_calls": 0,
+          "errors": [],
+          "escalated": true,
+          "urgent_flagged": true,
+          "quality": 0.9,
+          "models": {
+            "lire_tickets": "ollama:qwen2.5:3b",
+            "classer": "ollama:qwen2.5:3b",
+            "detecter_urgences": "ollama:qwen2.5:3b",
+            "escalader": "ollama:qwen2.5:3b",
+            "rediger_synthese": "ollama:qwen2.5:3b"
+          }
+        },
+        {
+          "completed": true,
+          "error": null,
+          "cost_usd": 0.0,
+          "latency_ms": 108489.5,
+          "wall_s": 70.5,
+          "calls": 5,
+          "failed_calls": 0,
+          "errors": [],
+          "escalated": true,
+          "urgent_flagged": true,
+          "quality": 0.82,
+          "models": {
+            "lire_tickets": "ollama:qwen2.5:3b",
+            "classer": "ollama:qwen2.5:3b",
+            "detecter_urgences": "ollama:qwen2.5:3b",
+            "escalader": "ollama:qwen2.5:3b",
+            "rediger_synthese": "ollama:qwen2.5:3b"
+          }
+        },
+        {
+          "completed": true,
+          "error": null,
+          "cost_usd": 0.0,
+          "latency_ms": 84957.5,
+          "wall_s": 71.21,
+          "calls": 5,
+          "failed_calls": 0,
+          "errors": [],
+          "escalated": true,
+          "urgent_flagged": true,
+          "quality": 0.84,
+          "models": {
+            "lire_tickets": "ollama:qwen2.5:3b",
+            "classer": "ollama:qwen2.5:3b",
+            "detecter_urgences": "ollama:qwen2.5:3b",
+            "escalader": "ollama:qwen2.5:3b",
+            "rediger_synthese": "ollama:qwen2.5:3b"
+          }
+        }
+      ]
     }
   }
 }

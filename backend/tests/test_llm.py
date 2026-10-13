@@ -306,3 +306,20 @@ class TestPortabilityExperiment:
         summary = summarize([run])
         assert summary["completion"] == 1.0
         assert summary["urgent_detected"] == 1.0
+
+    def test_merge_adds_a_provider_and_recomputes_the_gap(self) -> None:
+        from ceg.experiments.portabilite import merge
+
+        def report(name: str, quality: float, judge: str = "j") -> dict[str, Any]:
+            summary = {"quality": quality}
+            return {
+                "judge": judge,
+                "providers": {name: {"available": True, "summary": summary}},
+            }
+
+        merged = merge(report("gemini", 0.8), report("ollama", 0.6))
+        assert set(merged["providers"]) == {"gemini", "ollama"}
+        assert merged["quality_gap"] == 0.25
+        assert merged["h2_met"] is False
+        with pytest.raises(ValueError, match="Juges différents"):
+            merge(report("gemini", 0.8), report("ollama", 0.6, judge="autre"))

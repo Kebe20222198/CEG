@@ -220,9 +220,22 @@ def run_experiment(
             "summary": summarize(provider_runs),
             "runs": provider_runs,
         }
+    return with_gap(
+        {
+            "workflow": WORKFLOW,
+            "latency_limit_s": LATENCY_LIMIT_S,
+            "runs_per_provider": runs,
+            "judge": judge_name,
+            "providers": results,
+        }
+    )
+
+
+def with_gap(report: dict[str, Any]) -> dict[str, Any]:
+    """Add the relative quality gap between providers, and the H2 verdict."""
     qualities = [
         r["summary"]["quality"]
-        for r in results.values()
+        for r in report["providers"].values()
         if r.get("available") and r["summary"]["quality"] is not None
     ]
     gap = (
@@ -230,15 +243,21 @@ def run_experiment(
         if len(qualities) >= 2 and max(qualities) > 0
         else None
     )
-    return {
-        "workflow": WORKFLOW,
-        "latency_limit_s": LATENCY_LIMIT_S,
-        "runs_per_provider": runs,
-        "judge": judge_name,
-        "quality_gap": gap,
-        "h2_met": gap is not None and gap <= 0.15,
-        "providers": results,
-    }
+    return {**report, "quality_gap": gap, "h2_met": gap is not None and gap <= 0.15}
+
+
+def merge(previous: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
+    """Add the providers of ``new`` to an earlier report (same judge)."""
+    if previous.get("judge") != new.get("judge"):
+        raise ValueError(
+            f"Juges différents ({previous.get('judge')} / {new.get('judge')}) : "
+            "les qualités ne seraient pas comparables."
+        )
+    providers_ = {**previous["providers"]}
+    for name, result in new["providers"].items():
+        if result.get("available"):
+            providers_[name] = result
+    return with_gap({**previous, "providers": providers_})
 
 
 def _print(report: dict[str, Any]) -> None:
@@ -278,12 +297,19 @@ def main() -> None:
     parser.add_argument(
         "--json", type=Path, help="écrire les résultats dans ce fichier"
     )
+    parser.add_argument(
+        "--merge",
+        action="store_true",
+        help="ajouter les fournisseurs mesurés au fichier --json existant",
+    )
     args = parser.parse_args()
     for folder in (Path.cwd(), Path.cwd().parent, ROOT):
         load_dotenv(folder / ".env")
     logging.getLogger("ceg").setLevel(logging.ERROR)
     only = args.providers.split(",") if args.providers else None
     report = run_experiment(runs=args.runs, only=only, pause_s=args.pause)
+    if args.merge and args.json and args.json.exists():
+        report = merge(json.loads(args.json.read_text(encoding="utf-8")), report)
     _print(report)
     if args.json:
         args.json.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")

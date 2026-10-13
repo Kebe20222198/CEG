@@ -172,7 +172,7 @@ npm run dev
 
 ```bash
 cd backend
-pytest                      # 494 tests (base SQLite temporaire, jamais ceg.db ; aucun appel réseau)
+pytest                      # 495 tests (base SQLite temporaire, jamais ceg.db ; aucun appel réseau)
 ruff check . && ruff format --check .
 mypy                        # mode strict sur src/, api/ et tests/
 
