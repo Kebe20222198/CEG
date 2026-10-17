@@ -1,0 +1,200 @@
+{
+  "workflow": "analyse_ventes_alertes",
+  "latency_limit_s": 300.0,
+  "runs_per_scenario": 3,
+  "expected": {
+    "A": [],
+    "B": [
+      "Nord"
+    ],
+    "C": [
+      "Nord",
+      "Ouest",
+      "Sud"
+    ],
+    "D": null
+  },
+  "providers": {
+    "gemini": {
+      "available": true,
+      "runs": {
+        "A": [
+          {
+            "completed": true,
+            "error": null,
+            "correct": true,
+            "alerted": false,
+            "regions": [],
+            "cost_usd": 0.002085,
+            "latency_ms": 18860.9,
+            "failed_calls": 0,
+            "errors": []
+          },
+          {
+            "completed": true,
+            "error": null,
+            "correct": true,
+            "alerted": false,
+            "regions": [],
+            "cost_usd": 0.002085,
+            "latency_ms": 10572.1,
+            "failed_calls": 0,
+            "errors": []
+          },
+          {
+            "completed": true,
+            "error": null,
+            "correct": true,
+            "alerted": false,
+            "regions": [],
+            "cost_usd": 0.00208,
+            "latency_ms": 18767.1,
+            "failed_calls": 0,
+            "errors": []
+          }
+        ],
+        "B": [
+          {
+            "completed": true,
+            "error": null,
+            "correct": true,
+            "alerted": true,
+            "regions": [
+              "Nord"
+            ],
+            "cost_usd": 0.001441,
+            "latency_ms": 13133.8,
+            "failed_calls": 0,
+            "errors": []
+          },
+          {
+            "completed": true,
+            "error": null,
+            "correct": true,
+            "alerted": true,
+            "regions": [
+              "Nord"
+            ],
+            "cost_usd": 0.001441,
+            "latency_ms": 13208.1,
+            "failed_calls": 0,
+            "errors": []
+          },
+          {
+            "completed": true,
+            "error": null,
+            "correct": true,
+            "alerted": true,
+            "regions": [
+              "Nord"
+            ],
+            "cost_usd": 0.001441,
+            "latency_ms": 47491.1,
+            "failed_calls": 0,
+            "errors": []
+          }
+        ],
+        "C": [
+          {
+            "completed": false,
+            "error": "fetch_data: Execution failed for node 'fetch_data': gemini:gemini-2.5-flash-lite: réponse inutilisable (JSON invalide : Expecting ',' delimiter)",
+            "correct": false,
+            "alerted": false,
+            "regions": [],
+            "cost_usd": 0.0,
+            "latency_ms": 50714.2,
+            "failed_calls": 5,
+            "errors": [
+              "HTTP 429: You exceeded your current quota, please check your plan and billing details. For more information on this erro",
+              "JSON invalide : Expecting ',' delimiter",
+              "pas d'objet JSON"
+            ]
+          },
+          {
+            "completed": false,
+            "error": "fetch_data: Execution failed for node 'fetch_data': gemini:gemini-2.5-flash-lite: HTTP 429: You exceeded your current quota, please check your plan and billing details. For",
+            "correct": false,
+            "alerted": false,
+            "regions": [],
+            "cost_usd": 0.0,
+            "latency_ms": 0.0,
+            "failed_calls": 5,
+            "errors": [
+              "HTTP 429: You exceeded your current quota, please check your plan and billing details. For more information on this erro",
+              "HTTP 503: This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again lat"
+            ]
+          },
+          {
+            "completed": false,
+            "error": "fetch_data: Execution failed for node 'fetch_data': gemini:gemini-2.5-flash-lite: HTTP 429: You exceeded your current quota, please check your plan and billing details. For",
+            "correct": false,
+            "alerted": false,
+            "regions": [],
+            "cost_usd": 0.0,
+            "latency_ms": 14148.1,
+            "failed_calls": 5,
+            "errors": [
+              "HTTP 429: You exceeded your current quota, please check your plan and billing details. For more information on this erro",
+              "pas d'objet JSON"
+            ]
+          }
+        ],
+        "D": [
+          {
+            "completed": false,
+            "error": "compute_trend: Budget or latency budget exhausted — no model fits, even degraded.",
+            "correct": true,
+            "alerted": false,
+            "regions": [],
+            "cost_usd": 0.0,
+            "latency_ms": 11376.4,
+            "failed_calls": 8,
+            "errors": [
+              "HTTP 429: You exceeded your current quota, please check your plan and billing details. For more information on this erro"
+            ]
+          },
+          {
+            "completed": false,
+            "error": "compute_trend: Execution failed for node 'compute_trend': gemini:gemini-2.5-flash-lite: HTTP 429: You exceeded your current quota, please check your plan and billing details. ",
+            "correct": true,
+            "alerted": false,
+            "regions": [],
+            "cost_usd": 0.0,
+            "latency_ms": 10553.9,
+            "failed_calls": 9,
+            "errors": [
+              "HTTP 429: You exceeded your current quota, please check your plan and billing details. For more information on this erro"
+            ]
+          },
+          {
+            "completed": false,
+            "error": "compute_trend: Budget or latency budget exhausted — no model fits, even degraded.",
+            "correct": true,
+            "alerted": false,
+            "regions": [],
+            "cost_usd": 0.0,
+            "latency_ms": 11458.5,
+            "failed_calls": 8,
+            "errors": [
+              "HTTP 429: You exceeded your current quota, please check your plan and billing details. For more information on this erro",
+              "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions unreachable: [Errno 22] Invalid argument"
+            ]
+          }
+        ]
+      },
+      "summary": {
+        "runs": 12,
+        "correct": 0.75,
+        "completed": 0.5,
+        "cost_usd": 0.001762,
+        "latency_ms": 20338.8,
+        "by_scenario": {
+          "A": 1.0,
+          "B": 1.0,
+          "C": 0.0,
+          "D": 1.0
+        }
+      }
+    }
+  }
+}

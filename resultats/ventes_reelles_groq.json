@@ -1,0 +1,199 @@
+{
+  "workflow": "analyse_ventes_alertes",
+  "latency_limit_s": 300.0,
+  "runs_per_scenario": 3,
+  "expected": {
+    "A": [],
+    "B": [
+      "Nord"
+    ],
+    "C": [
+      "Nord",
+      "Ouest",
+      "Sud"
+    ],
+    "D": null
+  },
+  "providers": {
+    "groq": {
+      "available": true,
+      "runs": {
+        "A": [
+          {
+            "completed": true,
+            "error": null,
+            "correct": true,
+            "alerted": false,
+            "regions": [],
+            "cost_usd": 0.001631,
+            "latency_ms": 10620.5,
+            "failed_calls": 0,
+            "errors": []
+          },
+          {
+            "completed": true,
+            "error": null,
+            "correct": true,
+            "alerted": false,
+            "regions": [],
+            "cost_usd": 0.001652,
+            "latency_ms": 13206.7,
+            "failed_calls": 0,
+            "errors": []
+          },
+          {
+            "completed": true,
+            "error": null,
+            "correct": true,
+            "alerted": false,
+            "regions": [],
+            "cost_usd": 0.001768,
+            "latency_ms": 5445.4,
+            "failed_calls": 0,
+            "errors": []
+          }
+        ],
+        "B": [
+          {
+            "completed": true,
+            "error": null,
+            "correct": true,
+            "alerted": true,
+            "regions": [
+              "Nord"
+            ],
+            "cost_usd": 0.001983,
+            "latency_ms": 6412.3,
+            "failed_calls": 0,
+            "errors": []
+          },
+          {
+            "completed": true,
+            "error": null,
+            "correct": true,
+            "alerted": true,
+            "regions": [
+              "Nord"
+            ],
+            "cost_usd": 0.002048,
+            "latency_ms": 5934.7,
+            "failed_calls": 0,
+            "errors": []
+          },
+          {
+            "completed": true,
+            "error": null,
+            "correct": true,
+            "alerted": true,
+            "regions": [
+              "Nord"
+            ],
+            "cost_usd": 0.001947,
+            "latency_ms": 12256.9,
+            "failed_calls": 0,
+            "errors": []
+          }
+        ],
+        "C": [
+          {
+            "completed": true,
+            "error": null,
+            "correct": true,
+            "alerted": true,
+            "regions": [
+              "Nord",
+              "Ouest",
+              "Sud"
+            ],
+            "cost_usd": 0.002274,
+            "latency_ms": 9389.8,
+            "failed_calls": 0,
+            "errors": []
+          },
+          {
+            "completed": true,
+            "error": null,
+            "correct": true,
+            "alerted": true,
+            "regions": [
+              "Nord",
+              "Ouest",
+              "Sud"
+            ],
+            "cost_usd": 0.002733,
+            "latency_ms": 11364.3,
+            "failed_calls": 1,
+            "errors": [
+              "https://api.groq.com/openai/v1/chat/completions unreachable: timed out"
+            ]
+          },
+          {
+            "completed": true,
+            "error": null,
+            "correct": true,
+            "alerted": true,
+            "regions": [
+              "Nord",
+              "Ouest",
+              "Sud"
+            ],
+            "cost_usd": 0.002937,
+            "latency_ms": 10661.5,
+            "failed_calls": 0,
+            "errors": []
+          }
+        ],
+        "D": [
+          {
+            "completed": true,
+            "error": null,
+            "correct": false,
+            "alerted": true,
+            "regions": [
+              "Nord"
+            ],
+            "cost_usd": 0.001113,
+            "latency_ms": 4672.0,
+            "failed_calls": 0,
+            "errors": []
+          },
+          {
+            "completed": true,
+            "error": null,
+            "correct": true,
+            "alerted": false,
+            "regions": [],
+            "cost_usd": 0.000705,
+            "latency_ms": 5810.1,
+            "failed_calls": 0,
+            "errors": []
+          },
+          {
+            "completed": true,
+            "error": null,
+            "correct": true,
+            "alerted": false,
+            "regions": [],
+            "cost_usd": 0.000822,
+            "latency_ms": 4102.3,
+            "failed_calls": 0,
+            "errors": []
+          }
+        ]
+      },
+      "summary": {
+        "runs": 12,
+        "correct": 0.917,
+        "completed": 1.0,
+        "cost_usd": 0.001801,
+        "latency_ms": 8323.0,
+        "by_scenario": {
+          "A": 1.0,
+          "B": 1.0,
+          "C": 1.0,
+          "D": 0.667
+        }
+      }
+    }
+  }
+}
